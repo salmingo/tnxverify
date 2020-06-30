@@ -2,6 +2,7 @@
  Name        : tnxverify.cpp
  Author      : Xiaomeng Lu
  Description : 验证TNX投影精度
+ Version     : 0.1
  - 从SEx结果读取XY
  - 从Ast结果读取WCS
  - 由XY和WCS计算(ra1, dc1)
@@ -10,6 +11,14 @@
  - 由XY和TNX模型计算(ra3, dc3)
  - 验证模型可行性和精度
  - 由(ra3, dc3)匹配UCAC4星表, 验证与WCS模型的提升程度
+
+ Version     : 0.2
+ - 从Ast生成的.xyls和.rdls中提取(x1,y1)和(ra1,dc1)
+ - 使用(x1,y1)和(ra1,dc1)拟合生成TNX模型, 评估模型精度
+ - 从SEx读取(x2,y2)
+ - 从Ast生成的.wcs中提取WCS模型
+ - 由WCS模型计算(ra2,dc2)
+ - 由TNX模型计算(x2,y2)对应的(ra3,dc3)
  **/
 
 #include <cstdio>
@@ -262,6 +271,59 @@ void resolve_dateobs(const string &filepath, ImgFrmPtr frame) {
 
 	ptime tmobs  = from_iso_extended_string(frame->dateobs);
 	frame->mjdobs = tmobs.date().modjulian_day(); // 精确到天. 精度满足自行
+}
+
+/*!
+ * @brief 从Ast生成的.xyls和.rdls文件中提取XY和赤道坐标
+ * @param filepath  文件路径
+ * @param frame     数据结构
+ */
+void refstar_from_list(const string &filepath, ImgFrmPtr frame) {
+	fitsfile *fitsptr;	//< 基于cfitsio接口的文件操作接口
+	int status(0);
+	long nrows;
+	double *ra, *dc, *x, *y;
+
+	// 从.rdls读取赤经赤纬
+	path rdls = filepath;
+	rdls.replace_extension(".rdls");
+	fits_open_file(&fitsptr, rdls.c_str(), 0, &status);
+	fits_get_num_rows(fitsptr, &nrows, &status);
+	ra = new double[nrows];
+	dc = new double[nrows];
+	x  = new double[nrows];
+	y  = new double[nrows];
+	fits_read_col(fitsptr, TDOUBLE, 1, 1, 1, nrows, NULL, ra, NULL, &status);
+	fits_read_col(fitsptr, TDOUBLE, 2, 1, 1, nrows, NULL, dc, NULL, &status);
+	fits_close_file(fitsptr, &status);
+
+	// 从.xyls读取XY
+	path filename = path(filepath).stem();
+	path xyls = path(filepath).parent_path();
+
+	filename += "-indx.xyls";
+	xyls /= filename;
+	fits_open_file(&fitsptr, xyls.c_str(), 0, &status);
+	fits_read_col(fitsptr, TDOUBLE, 1, 1, 1, nrows, NULL, x, NULL, &status);
+	fits_read_col(fitsptr, TDOUBLE, 2, 1, 1, nrows, NULL, y, NULL, &status);
+	fits_close_file(fitsptr, &status);
+
+	// 填充frame
+	NFObjVector &nfobj = frame->nfobj;
+	for (long i = 0; i < nrows; ++i) {
+		ObjectInfo obj;
+		obj.ptbc.x  = x[i];
+		obj.ptbc.y  = y[i];
+		obj.ra_cat  = ra[i];
+		obj.dec_cat = dc[i];
+		obj.matched = 1;
+		nfobj.push_back(obj);
+	}
+
+	delete []ra;
+	delete []dc;
+	delete []x;
+	delete []y;
 }
 
 /*!
