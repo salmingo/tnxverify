@@ -16,6 +16,8 @@
 #ifndef WCSTNX_H_
 #define WCSTNX_H_
 
+#include <vector>
+
 namespace AstroUtil {
 //////////////////////////////////////////////////////////////////////////////
 /*---------- 声明相关数据结构 ----------*/
@@ -29,6 +31,7 @@ struct MatchedStar {
 	/* 拟合结果 */
 	double ra_fit, dc_fit;	/// RA/DEC坐标, 量纲: 角度
 };
+typedef std::vector<MatchedStar> MatStarVec;
 
 enum {// 畸变修正函数类型
 	FUNC_LINEAR = 1,	//< 线性
@@ -44,6 +47,10 @@ enum {// 多项式交叉系数类型
 
 /*!
  * @struct PrjTNXRes  TNX投影残差模型参数
+ * @note
+ * - 计算畸变残差
+ * - 残差是指真实位置与PrjTNX转换矩阵计算位置的偏差
+ * - 残差量纲: 角秒
  */
 struct PrjTNXRes {
 	/*!
@@ -136,6 +143,9 @@ protected:
 
 /*!
  * @struct PrjTNX TNX投影模型参数
+ * @note
+ * - 由XY计算世界坐标
+ * - 由世界坐标计算XY
  */
 struct PrjTNX {
 	double ref_pixx, ref_pixy;	/// 参考点XY坐标
@@ -143,6 +153,9 @@ struct PrjTNX {
 	double cd[2][2];			/// XY->WCS的转换矩阵, 量纲: 角度/像素
 	double ccd[2][2];			/// WCS->XY的转换矩阵, 量纲: 像素/角度
 	PrjTNXRes res[2];			/// 残差/畸变参数及模型
+	double scale;		/// 像元比例尺, 量纲: 角秒/像素
+	double rotation;	/// X轴与投影平面X轴正向夹角, 量纲: 角度
+	double errfit;		/// 拟合残差, 量纲: 角秒
 
 /* 接口 */
 public:
@@ -162,17 +175,38 @@ public:
 	 * @param y    坐标Y
 	 */
 	void WCS2Image(double ra, double dc, double &x, double &y);
-
-/* 功能 */
-protected:
 	/*!
 	 * @brief 使用转换矩阵, 由XY计算投影平面坐标
 	 * @param x    坐标X
 	 * @param y    坐标Y
-	 * @param xi   投影平面X坐标, 量纲: 角度
-	 * @param eta  投影平面Y坐标, 量纲: 角度
+	 * @param xi   投影平面X坐标, 量纲: 弧度
+	 * @param eta  投影平面Y坐标, 量纲: 弧度
 	 */
-	void image_to_plane(double x, double y, double &xi, double &eta);
+	void Image2Plane(double x, double y, double &xi, double &eta);
+	/*!
+	 * @brief 使用TAN投影, 由投影平面坐标计算世界坐标
+	 * @param xi   投影平面X坐标, 量纲: 弧度
+	 * @param eta  投影平面Y坐标, 量纲: 弧度
+	 * @param ra   世界坐标X, 量纲: 弧度
+	 * @param dc   世界坐标Y, 量纲: 弧度
+	 */
+	void Plane2WCS(double xi, double eta, double &ra, double &dc);
+	/*!
+	 * @brief 使用TAN投影, 由世界坐标计算投影平面坐标
+	 * @param ra   世界坐标X, 量纲: 弧度
+	 * @param dc   世界坐标Y, 量纲: 弧度
+	 * @param xi   投影平面X坐标, 量纲: 弧度
+	 * @param eta  投影平面Y坐标, 量纲: 弧度
+	 */
+	void WCS2Plane(double ra, double dc, double &xi, double &eta);
+	/*!
+	 * @brief 使用逆转换矩阵, 由投影平面坐标计算XY
+	 * @param xi   投影平面X坐标, 量纲: 弧度
+	 * @param eta  投影平面Y坐标, 量纲: 弧度
+	 * @param x    坐标X
+	 * @param y    坐标Y
+	 */
+	void Plane2Image(double xi, double eta, double &x, double &y);
 };
 /*---------- 声明相关数据结构 ----------*/
 //////////////////////////////////////////////////////////////////////////////
@@ -180,8 +214,119 @@ class WCSTNX {
 public:
 	WCSTNX();
 	virtual ~WCSTNX();
-};
 
-} /* namespace AstroUtil */
+/* 成员变量 */
+protected:
+	PrjTNX model_;		/// TNX投影模型
+	MatStarVec stars_;	/// 用于拟合模型的样本
+
+/* 接口 */
+public:
+	/*!
+	 * @brief 访问TNX模型
+	 * @return
+	 * 模型地址
+	 */
+	const PrjTNX *GetModel();
+	/*!
+	 * @brief 设置归一化范围
+	 * @param xmin  X最小值
+	 * @param ymin  Y最小值
+	 * @param xmax  X最大值
+	 * @param ymax  Y最大值
+	 */
+	void SetNormalRange(double xmin, double ymin, double xmax, double ymax);
+	/*!
+	 * @brief 设置畸变残差拟合参数
+	 * @param func    基函数类型
+	 * @param xterm   交叉项类型
+	 * @param xorder  X阶次
+	 * @param yorder  Y阶次
+	 */
+	void SetParamRes(int func, int xterm, int xorder, int yorder);
+
+public:
+	/*!
+	 * @brief 从FITS文件头加载WCS参数
+	 * @param filepath FITS文件路径
+	 * @return
+	 * 参数加载结果
+	 *  0: 正确
+	 * -1: 不能打开FITS文件
+	 * -2: 非TNX标准WCS信息
+	 * -3: 缺少一阶修正模型
+	 * -4: 旋转矩阵为奇异矩阵
+	 * -5: 残差修正模型格式错误
+	 */
+	int LoadImage(const char* filepath);
+	/*!
+	 * @brief 从文本文件加载WCS参数
+	 * @param filepath 文本文件路径
+	 * @return
+	 * 参数加载结果
+	 */
+	bool LoadText(const char* filepath);
+	/*!
+	 * @brief 将LoadText加载的TNX参数写入filepath指代的FITS文件
+	 * @param filepath FITS文件路径
+	 * @return
+	 * 操作结果.
+	 * 2017-11-15
+	 *   0: 成功
+	 *  -1: 未加载位置定标文件, 位置定标必须为TNX格式
+	 *  -2: 不能打开FITS文件
+	 * 其它: fitsio错误
+	 */
+	int WriteImage(const char* filepath);
+
+/* 模型拟合 */
+public:
+	/**
+	 * 声明用于拟合模型的接口. 说明使用:
+	 * - PrepareFit()
+	 * - AddSample(), 循环调用直至所有样本加入拟合
+	 **/
+	/*!
+	 * @brief 模型拟合前的准备
+	 * @param refx  参考点的X坐标
+	 * @param refy  参考点的Y坐标
+	 * @return
+	 * 准备的完成结果.
+	 * - true:  成功
+	 * - false: 畸变残差拟合参数错误
+	 */
+	bool PrepareFit(double refx = -1.0, double refy = -1.0);
+	/*!
+	 * @brief 添加用于拟合的样本
+	 * @param matstar  建立匹配关系的参考星
+	 */
+	void AddSample(const MatchedStar &matstar);
+	/*!
+	 * @brief 尝试完成TNX模型拟合
+	 * @return
+	 * 拟合结果
+	 * - 0: 成功
+	 * - 1: 样本不足
+	 * - 2: 模型拟合失败. 样本不能构建非奇异矩阵, 即样本具有较高的相关性
+	 */
+	int ProcessFit();
+
+protected:
+	/*!
+	 * @brief 从样本中查找最接近参考点的星作为投影中心
+	 * @param refx  X坐标
+	 * @param refy  Y坐标
+	 * @param refr  赤经, 量纲: 角度
+	 * @param refd  赤纬, 量纲: 角度
+	 */
+	void find_nearest(double &refx, double &refy, double &refr, double &refd);
+	/*!
+	 * @brief 尝试拟合TNX模型
+	 * @return
+	 * 模型拟合结果
+	 */
+	bool try_fit();
+};
 //////////////////////////////////////////////////////////////////////////////
+} /* namespace AstroUtil */
 #endif /* WCSTNX_H_ */
