@@ -34,15 +34,15 @@ struct MatchedStar {
 typedef std::vector<MatchedStar> MatStarVec;
 
 enum {// 畸变修正函数类型
-	FUNC_LINEAR = 1,	//< 线性
+	FUNC_CHEBYSHEV = 1,	//< 契比雪夫
 	FUNC_LEGENDRE,		//< 勒让德
-	FUNC_CHEBYSHEV		//< 契比雪夫
+	FUNC_LINEAR			//< 线性
 };
 
 enum {// 多项式交叉系数类型
 	X_NONE,	//< 无交叉项
-	X_HALF,	//< 半交叉
-	X_FULL	//< 全交叉
+	X_FULL,	//< 全交叉
+	X_HALF	//< 半交叉
 };
 
 /*!
@@ -148,11 +148,12 @@ protected:
  * - 由世界坐标计算XY
  */
 struct PrjTNX {
+	bool valid_fit, valid_res;	/// 模型有效性
 	double ref_pixx, ref_pixy;	/// 参考点XY坐标
-	double ref_wcsx, ref_wcsy;	/// 参考点世界坐标, 量纲: 角度
-	double cd[2][2];			/// XY->WCS的转换矩阵, 量纲: 角度/像素
-	double ccd[2][2];			/// WCS->XY的转换矩阵, 量纲: 像素/角度
-	PrjTNXRes res[2];			/// 残差/畸变参数及模型
+	double ref_wcsx, ref_wcsy;	/// 参考点世界坐标, 量纲: 弧度
+	double cd[2][2];	/// XY->WCS的转换矩阵, 量纲: 角度/像素
+	double ccd[2][2];	/// WCS->XY的转换矩阵, 量纲: 像素/角度
+	PrjTNXRes res[2];	/// 残差/畸变参数及模型
 	double scale;		/// 像元比例尺, 量纲: 角秒/像素
 	double rotation;	/// X轴与投影平面X轴正向夹角, 量纲: 角度
 	double errfit;		/// 拟合残差, 量纲: 角秒
@@ -278,6 +279,24 @@ public:
 	 * 其它: fitsio错误
 	 */
 	int WriteImage(const char* filepath);
+
+protected:
+	/*!
+	 * @brief 解析FITS头中以字符串记录的TNX修正模型
+	 * @param strcor 字符串
+	 * @param res    畸变改正模型参数存储区
+	 * @return
+	 * 解析结果
+	 */
+	int resolve_residual(char *strcor, PrjTNXRes *res);
+	/*!
+	 * @brief 最大可能保留浮点数精度, 将浮点数转换为字符串
+	 * @param output 输出字符串
+	 * @param value  浮点数
+	 * @return
+	 * 转换后字符串长度
+	 */
+	int output_precision_double(char *output, double value);
 
 /* 模型拟合 */
 public:

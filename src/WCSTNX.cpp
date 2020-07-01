@@ -18,9 +18,12 @@
 #include <stdio.h>
 #include <longnam.h>
 #include <fitsio.h>
+#include <string>
 #include "ADefine.h"
 #include "AMath.h"
 #include "WCSTNX.h"
+
+using namespace std;
 
 namespace AstroUtil {
 //////////////////////////////////////////////////////////////////////////////
@@ -56,19 +59,19 @@ void PrjTNXRes::SetRange(double xmin, double ymin, double xmax, double ymax) {
 }
 
 bool PrjTNXRes::Initialize() {
-	if      (func == FUNC_LINEAR)    basefunc = &power_array;
-	else if (func == FUNC_LEGENDRE)  basefunc = &legendre_array;
-	else if (func == FUNC_CHEBYSHEV) basefunc = &chebyshev_array;
-	else return false;
-	if (xterm < X_NONE || xterm > X_FULL) return false;
-	if (xorder < 2 || xorder > 10) return false;
-	if (yorder < 2 || yorder > 10) return false;
-
 	int n;
 	int order = xorder < yorder ? xorder : yorder;
+
+	if      (func == FUNC_LEGENDRE)  basefunc = &legendre_array;
+	else if (func == FUNC_LINEAR)    basefunc = &power_array;
+	else if (func == FUNC_CHEBYSHEV) basefunc = &chebyshev_array;
+	else return false;
+	if (xorder < 2 || xorder > 10) return false;
+	if (yorder < 2 || yorder > 10) return false;
 	if      (xterm == X_NONE) n = xorder + yorder - 1;
 	else if (xterm == X_FULL) n = xorder * yorder;
-	else                      n = xorder * yorder - order * (order - 1) / 2;
+	else if (xterm == X_HALF) n = xorder * yorder - order * (order - 1) / 2;
+	else return false;
 	if (n != nitem) UnInitialize();
 	nitem = n;
 	if (coef == NULL) coef = (double *) calloc(nitem, sizeof(double));
@@ -190,19 +193,15 @@ void PrjTNX::Image2Plane(double x, double y, double &xi, double &eta) {
 }
 
 void PrjTNX::Plane2WCS(double xi, double eta, double &ra, double &dc) {
-	double ra0 = ref_wcsx * D2R;
-	double dc0 = ref_wcsy * D2R;
-	double fract = cos(dc0) - eta * sin(dc0);
-	ra = cyclemod(ra0 + atan2(xi, fract), A2PI);
-	dc = atan(((eta * cos(dc0) + sin(dc0)) * cos(ra - ra0)) / fract);
+	double fract = cos(ref_wcsy) - eta * sin(ref_wcsy);
+	ra = cyclemod(ref_wcsx + atan2(xi, fract), A2PI);
+	dc = atan(((eta * cos(ref_wcsy) + sin(ref_wcsy)) * cos(ra - ref_wcsx)) / fract);
 }
 
 void PrjTNX::WCS2Plane(double ra, double dc, double &xi, double &eta) {
-	double ra0 = ref_wcsx * D2R;
-	double dc0 = ref_wcsy * D2R;
-	double fract = sin(dc0) * sin(dc) + cos(dc0) * cos(dc) * cos(ra - ra0);
-	xi  = cos(dc) * sin(ra - ra0) / fract;
-	eta = (cos(dc0) * sin(dc) - sin(dc0) * cos(dc) * cos(ra - ra0)) / fract;
+	double fract = sin(ref_wcsy) * sin(dc) + cos(ref_wcsy) * cos(dc) * cos(ra - ref_wcsx);
+	xi  = cos(dc) * sin(ra - ref_wcsx) / fract;
+	eta = (cos(ref_wcsy) * sin(dc) - sin(ref_wcsy) * cos(dc) * cos(ra - ref_wcsx)) / fract;
 }
 
 void PrjTNX::Plane2Image(double xi, double eta, double &x, double &y) {
@@ -269,9 +268,11 @@ int WCSTNX::LoadImage(const char* filepath) {
 	// 读取畸变改正项
 	fits_read_key(fitsptr, TSTRING, "WAT1_001", value, NULL, &status);
 	fits_read_key(fitsptr, TSTRING, "WAT2_001", value, NULL, &status);
+	fits_close_file(fitsptr, &status);
 	if (status) return 0;
 
 	// 解析残差修正模型
+	bool rslt;
 	for (j = 1; j <= 2; ++j) {
 		ptr = &strcor[j - 1];
 		i = n = 0;
@@ -286,10 +287,10 @@ int WCSTNX::LoadImage(const char* filepath) {
 		}
 		status = 0;
 	}
-	param_.valid[1] = !(resolve_tnxaxis(&strcor[0][0], &param_.tnx2[0])
-			|| resolve_tnxaxis(&strcor[1][0], &param_.tnx2[1]));
+	rslt = !(resolve_residual(&strcor[0][0], &model_.res[0])
+			|| resolve_residual(&strcor[1][0], &model_.res[1]));
 
-	return param_.valid[1] ? 0 : -5;
+	return rslt ? 0 : -5;
 }
 
 bool WCSTNX::LoadText(const char* filepath) {
@@ -304,10 +305,10 @@ bool WCSTNX::LoadText(const char* filepath) {
 		if (fgets(line, size, fp) == NULL) continue;
 		token = strtok(line, seps);
 
-		if      (!strcmp(token, "xpixref")) param_.ref_xy.x = atof(strtok(NULL, seps));
-		else if (!strcmp(token, "ypixref")) param_.ref_xy.y = atof(strtok(NULL, seps));
-		else if (!strcmp(token, "lngref"))  param_.ref_wcs.x = atof(strtok(NULL, seps)) * D2R;
-		else if (!strcmp(token, "latref"))  param_.ref_wcs.y = atof(strtok(NULL, seps)) * D2R;
+		if      (!strcmp(token, "xpixref")) model_.ref_pixx = atof(strtok(NULL, seps));
+		else if (!strcmp(token, "ypixref")) model_.ref_pixy = atof(strtok(NULL, seps));
+		else if (!strcmp(token, "lngref"))  model_.ref_wcsx = atof(strtok(NULL, seps)) * D2R;
+		else if (!strcmp(token, "latref"))  model_.ref_wcsy = atof(strtok(NULL, seps)) * D2R;
 		else if (token[0] == 's') {
 			int srfc = !strcmp(token, "surface1") ? 1 : (!strcmp(token, "surface2") ? 2 : 0);
 			if (srfc) {
@@ -374,7 +375,7 @@ bool WCSTNX::LoadText(const char* filepath) {
 
 int WCSTNX::WriteImage(const char* filepath) {
 	if (!param_.valid[0]) return -1; // 至少需要线性项
-	fits_handler hfits;
+	fitsfile *fitsptr;
 	if (!hfits(filepath, 1)) return -2; // FITS文件打开失败
 
 	string WCSASTRM = "ct4m.19990714T012701 (USNO-K V) by F. Valdes 1999-08-02";
@@ -384,14 +385,14 @@ int WCSTNX::WriteImage(const char* filepath) {
 	string WAT1 = "wtype=tnx axtype=ra lngcor = ";
 	string WAT2 = "wtype=tnx axtype=dec latcor = ";
 	int WCSDIM = 2;
-	double CRVAL1 = param_.ref_wcs.x * R2D;
-	double CRVAL2 = param_.ref_wcs.y * R2D;
-	double CRPIX1 = param_.ref_xy.x;
-	double CRPIX2 = param_.ref_xy.y;
-	double CD1_1  = param_.cd[0];
-	double CD1_2  = param_.cd[1];
-	double CD2_1  = param_.cd[2];
-	double CD2_2  = param_.cd[3];
+	double CRVAL1 = model_.ref_wcsx;
+	double CRVAL2 = model_.ref_wcsy;
+	double CRPIX1 = model_.ref_pixx;
+	double CRPIX2 = model_.ref_pixy;
+	double CD1_1  = model_.cd[0][0];
+	double CD1_2  = model_.cd[0][1];
+	double CD2_1  = model_.cd[1][0];
+	double CD2_2  = model_.cd[1][1];
 	int status(0);
 
 	if (param_.valid[1]) {
@@ -463,8 +464,60 @@ int WCSTNX::WriteImage(const char* filepath) {
 			}
 		}
 	}
+	fits_close_file(fitsptr, &status);
 
 	return status;
+}
+
+int WCSTNX::resolve_residual(char *strcor, PrjTNXRes *res)  {
+	char *pstr, *ptr;
+	const char seps[] = " ";
+	const char flags[] = "1234567890-+.";
+	int i, nitem;
+	double *coef;
+
+	if (NULL == (pstr = strpbrk(strcor, flags))) return 1;
+	res->func    = int(atof(strtok_r(pstr, seps, &ptr)) + 0.5);
+	res->xorder  = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? int(atof(pstr) + 0.5) : 0;
+	res->yorder  = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? int(atof(pstr) + 0.5) : 0;
+	res->xterm   = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? int(atof(pstr) + 0.5) : 0;
+	res->xmin    = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? atof(pstr) : 0.0;
+	res->xmax    = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? atof(pstr) : 0.0;
+	res->ymin    = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? atof(pstr) : 0.0;
+	res->ymax    = (pstr = strtok_r(NULL, seps, &ptr)) != NULL ? atof(pstr) : 0.0;
+	if (!res->Initialize()) return 2;
+
+	nitem = res->nitem;
+	coef  = res->coef;
+	for (i = 0; i < nitem && (pstr = strtok_r(NULL, seps, &ptr)) != NULL; ++i, ++coef)
+		*coef = atof(pstr);
+
+	return (i == nitem) ? 0 : 3;
+}
+
+int WCSTNX::output_precision_double(char *output, double value) {
+	int n(0), pos(0), valid(0), intv;
+	if (value < 0) {
+		output[0] = '-';
+		++pos;
+		value = -value;
+	}
+
+	// 整数部分
+	intv = int(value);
+	n = sprintf(output + pos, "%d.", intv);
+	pos += n;
+	valid = n - 1;
+	// 小数部分
+	while(valid < 17 && (value = (value - intv) * 10) > AEPS) {
+		intv = int(value);
+		sprintf(output + pos, "%d", intv);
+		++pos;
+		++valid;
+	}
+	output[pos] = 0;
+
+	return n;
 }
 
 bool WCSTNX::PrepareFit(double refx, double refy) {
