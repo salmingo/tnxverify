@@ -148,7 +148,7 @@ protected:
  * - 由世界坐标计算XY
  */
 struct PrjTNX {
-	bool valid_fit, valid_res;	/// 模型有效性
+	bool valid_cd, valid_res;	/// 模型拟合成功标志
 	double ref_pixx, ref_pixy;	/// 参考点XY坐标
 	double ref_wcsx, ref_wcsy;	/// 参考点世界坐标, 量纲: 弧度
 	double cd[2][2];	/// XY->WCS的转换矩阵, 量纲: 角度/像素
@@ -253,7 +253,7 @@ public:
 	 * @return
 	 * 参数加载结果
 	 *  0: 正确
-	 * -1: 不能打开FITS文件
+	 * -1: FITS文件访问异常
 	 * -2: 非TNX标准WCS信息
 	 * -3: 缺少一阶修正模型
 	 * -4: 旋转矩阵为奇异矩阵

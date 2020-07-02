@@ -236,14 +236,15 @@ void WCSTNX::SetParamRes(int func, int xterm, int xorder, int yorder) {
 }
 
 int WCSTNX::LoadImage(const char* filepath) {
-	fitsfile *fitsptr;
-	int status(0);
-	fits_open_file(&fitsptr, filepath, 0, &status);
-	if (status) return -1; // FITS文件打开失败
+	model_.valid_cd = model_.valid_res = false;
 
 	char keyword[10], value[70], CTYPE1[10], CTYPE2[10];
 	char strcor[2][2048], (*ptr)[2048];
 	int i, j, n;
+	fitsfile *fitsptr;
+	int status(0);
+	fits_open_file(&fitsptr, filepath, 0, &status);
+	if (status) return -1; // FITS文件打开失败
 
 	// 检查TNX关键字
 	fits_read_key(fitsptr, TSTRING, "CTYPE1", CTYPE1, NULL, &status);
@@ -261,6 +262,7 @@ int WCSTNX::LoadImage(const char* filepath) {
 	fits_read_key(fitsptr, TDOUBLE, "CD2_1",  &model_.cd[1][0], NULL, &status);
 	fits_read_key(fitsptr, TDOUBLE, "CD2_2",  &model_.cd[1][1], NULL, &status);
 	if (status) return -3;
+	model_.valid_cd = true;
 	// 生成逆转换矩阵
 	AMath math;
 	memcpy(&model_.ccd[0][0], &model_.cd[0][0], sizeof(model_.cd));
@@ -268,11 +270,9 @@ int WCSTNX::LoadImage(const char* filepath) {
 	// 读取畸变改正项
 	fits_read_key(fitsptr, TSTRING, "WAT1_001", value, NULL, &status);
 	fits_read_key(fitsptr, TSTRING, "WAT2_001", value, NULL, &status);
-	fits_close_file(fitsptr, &status);
 	if (status) return 0;
 
 	// 解析残差修正模型
-	bool rslt;
 	for (j = 1; j <= 2; ++j) {
 		ptr = &strcor[j - 1];
 		i = n = 0;
@@ -285,12 +285,12 @@ int WCSTNX::LoadImage(const char* filepath) {
 				else n += sprintf((*ptr) + n, "%s ", value);
 			}
 		}
-		status = 0;
 	}
-	rslt = !(resolve_residual(&strcor[0][0], &model_.res[0])
+	fits_close_file(fitsptr, &status);
+	model_.valid_res = !(resolve_residual(&strcor[0][0], &model_.res[0])
 			|| resolve_residual(&strcor[1][0], &model_.res[1]));
 
-	return rslt ? 0 : -5;
+	return model_.valid_res ? 0 : -5;
 }
 
 bool WCSTNX::LoadText(const char* filepath) {
@@ -300,6 +300,9 @@ bool WCSTNX::LoadText(const char* filepath) {
 	char line[size];
 	char seps[] = " \t\r\n";
 	char *token, *token1;
+	PrjTNXRes res1[2];
+
+	model_.valid_cd = model_.valid_res = false;
 
 	while(!feof(fp)) {
 		if (fgets(line, size, fp) == NULL) continue;
@@ -312,71 +315,70 @@ bool WCSTNX::LoadText(const char* filepath) {
 		else if (token[0] == 's') {
 			int srfc = !strcmp(token, "surface1") ? 1 : (!strcmp(token, "surface2") ? 2 : 0);
 			if (srfc) {
-				wcs_tnx *tnx = srfc == 1 ? &param_.tnx1[0] : &param_.tnx2[0];
+				PrjTNXRes *res = srfc == 1 ? &res1[0] : &model_.res[0];
 				int i, j, n;
+				bool valid(true);
 
 				n = atoi(strtok(NULL, seps));
-				for (i = j = 0; i < n && !feof(fp); ++i) {
+				for (i = j = 0; i < n && valid && !feof(fp); ++i) {
 					fgets(line, size, fp);
 					token = strtok(line, seps);
 					token1= strtok(NULL, seps);
 
 					if (i > 7) {
-						tnx[0].coef[j] = atof(token);
-						tnx[1].coef[j] = atof(token1);
+						if (j == 0) valid = res[0].Initialize() && res[1].Initialize();
+						if (valid) {
+							res[0].coef[j] = atof(token);
+							res[1].coef[j] = atof(token1);
+						}
 						++j;
 					}
 					else if (i == 0) {
-						tnx[0].function = int(atof(token)  + 0.5);
-						tnx[1].function = int(atof(token1) + 0.5);
+						res[0].func = int(atof(token)  + 0.5);
+						res[1].func = int(atof(token1) + 0.5);
 					}
 					else if (i == 1) {
-						tnx[0].set_orderx(int(atof(token)  + 0.5));
-						tnx[1].set_orderx(int(atof(token1) + 0.5));
+						res[0].xorder = int(atof(token)  + 0.5);
+						res[1].xorder = int(atof(token1) + 0.5);
 					}
 					else if (i == 2) {
-						tnx[0].set_ordery(int(atof(token)  + 0.5));
-						tnx[1].set_ordery(int(atof(token1) + 0.5));
+						res[0].yorder = int(atof(token)  + 0.5);
+						res[1].yorder = int(atof(token1) + 0.5);
 					}
 					else if (i == 3) {
-						tnx[0].set_xterm(int(atof(token)  + 0.5));
-						tnx[1].set_xterm(int(atof(token1) + 0.5));
+						res[0].xterm = int(atof(token)  + 0.5);
+						res[1].xterm = int(atof(token1) + 0.5);
 					}
-					else if (i == 4) { tnx[0].xmin = atof(token); tnx[1].xmin = atof(token1); }
-					else if (i == 5) { tnx[0].xmax = atof(token); tnx[1].xmax = atof(token1); }
-					else if (i == 6) { tnx[0].ymin = atof(token); tnx[1].ymin = atof(token1); }
-					else if (i == 7) { tnx[0].ymax = atof(token); tnx[1].ymax = atof(token1); }
+					else if (i == 4) { res[0].xmin = atof(token); res[1].xmin = atof(token1); }
+					else if (i == 5) { res[0].xmax = atof(token); res[1].xmax = atof(token1); }
+					else if (i == 6) { res[0].ymin = atof(token); res[1].ymin = atof(token1); }
+					else if (i == 7) { res[0].ymax = atof(token); res[1].ymax = atof(token1); }
 				}
-				param_.valid[srfc - 1] = n && i == n
-						&& TNX_CHEBYSHEV <= tnx[0].function && tnx[0].function <= TNX_LINEAR
-						&& TNX_CHEBYSHEV <= tnx[1].function && tnx[1].function <= TNX_LINEAR
-						&& tnx[0].xorder > 0 && tnx[0].yorder > 0
-						&& tnx[1].xorder > 0 && tnx[1].yorder > 0
-						&& TNX_XNONE <= tnx[0].xterm && tnx[0].xterm <= TNX_XHALF
-						&& TNX_XNONE <= tnx[1].xterm && tnx[1].xterm <= TNX_XHALF
-						&& tnx[0].xmax > tnx[0].xmin && tnx[0].ymax > tnx[0].ymin
-						&& tnx[1].xmax > tnx[1].xmin && tnx[1].ymax > tnx[1].ymin;
+				if (n && i == n && valid) {
+					if (srfc == 1) model_.valid_cd = true;
+					else model_.valid_res = true;
+				}
 			}
 		}
 	}
 	fclose(fp);
 
-	if (param_.valid[0]) {// 计算旋转矩阵
-		wcs_tnx *tnx = &param_.tnx1[0];
-		param_.cd[0] = 2 * tnx[0].coef[1] * AS2D / (tnx[0].xmax - tnx[0].xmin);
-		param_.cd[1] = 2 * tnx[0].coef[2] * AS2D / (tnx[0].ymax - tnx[0].ymin);
-		param_.cd[2] = 2 * tnx[1].coef[1] * AS2D / (tnx[1].xmax - tnx[1].xmin);
-		param_.cd[3] = 2 * tnx[1].coef[2] * AS2D / (tnx[1].ymax - tnx[1].ymin);
-		if (invert_matrix()) param_.valid[0] = false;
+	if (model_.valid_cd) {// 计算旋转矩阵
+		model_.cd[0][0] = 2 * res1[0].coef[1] * AS2D / (res1[0].xmax - res1[0].xmin);
+		model_.cd[0][1] = 2 * res1[0].coef[2] * AS2D / (res1[0].ymax - res1[0].ymin);
+		model_.cd[1][0] = 2 * res1[1].coef[1] * AS2D / (res1[1].xmax - res1[1].xmin);
+		model_.cd[1][1] = 2 * res1[1].coef[2] * AS2D / (res1[1].ymax - res1[1].ymin);
+
+		AMath math;
+		memcpy(&model_.ccd[0][0], &model_.cd[0][0], sizeof(model_.cd));
+		math.MatrixInvert(2, &model_.ccd[0][0]);
 	}
 
-	return (param_.valid[0]);
+	return model_.valid_cd;
 }
 
 int WCSTNX::WriteImage(const char* filepath) {
-	if (!param_.valid[0]) return -1; // 至少需要线性项
-	fitsfile *fitsptr;
-	if (!hfits(filepath, 1)) return -2; // FITS文件打开失败
+	if (!model_.valid_cd) return -1; // 至少需要线性项
 
 	string WCSASTRM = "ct4m.19990714T012701 (USNO-K V) by F. Valdes 1999-08-02";
 	string CTYPE1 = "RA---TNX";
@@ -395,27 +397,27 @@ int WCSTNX::WriteImage(const char* filepath) {
 	double CD2_2  = model_.cd[1][1];
 	int status(0);
 
-	if (param_.valid[1]) {
-		wcs_tnx *tnx = &param_.tnx2[0];
+	if (model_.valid_res) {
+		PrjTNXRes *res = &model_.res[0];
 		int n, nc, i, j;
 		char strcor[2][2048];
 		char txtdbl[20];
 		char (*ptr)[2048];
-		for (j = 0, tnx = &param_.tnx2[0]; j < 2; ++j, ++tnx) {
+		for (j = 0; j < 2; ++j, ++res) {
 			ptr = &strcor[j];
-			n = sprintf(*ptr, "\"%d %d %d %d ", tnx->function, tnx->xorder, tnx->yorder, tnx->xterm);
-			output_precision_double(txtdbl, tnx->xmin);
+			n = sprintf(*ptr, "\"%d %d %d %d ", res->func, res->xorder, res->yorder, res->xterm);
+			output_precision_double(txtdbl, res->xmin);
 			n += sprintf((*ptr) + n, "%s ", txtdbl);
-			output_precision_double(txtdbl, tnx->xmax);
+			output_precision_double(txtdbl, res->xmax);
 			n += sprintf((*ptr) + n, "%s ", txtdbl);
-			output_precision_double(txtdbl, tnx->ymin);
+			output_precision_double(txtdbl, res->ymin);
 			n += sprintf((*ptr) + n, "%s ", txtdbl);
-			output_precision_double(txtdbl, tnx->ymax);
+			output_precision_double(txtdbl, res->ymax);
 			n += sprintf((*ptr) + n, "%s ", txtdbl);
 
-			nc = tnx->ncoef;
+			nc = res->nitem;
 			for (i = 0; i < nc; ++i) {
-				output_precision_double(txtdbl, tnx->coef[i]);
+				output_precision_double(txtdbl, res->coef[i]);
 				n += sprintf((*ptr) + n, "%s ", txtdbl);
 			}
 			n += sprintf((*ptr) + n, "\"");
@@ -427,6 +429,9 @@ int WCSTNX::WriteImage(const char* filepath) {
 		WAT2 += strcor[1];
 	}
 
+	fitsfile *fitsptr;
+	int status(0);
+	fits_open_file(&fitsptr, filepath, 1, &status);
 	// 写入FITS头
 	fits_update_key(fitsptr, TSTRING, "WCSASTRM", (void*) WCSASTRM.c_str(), "WCS Source",         &status);
 	fits_update_key(fitsptr, TINT,    "WCSDIM",   &WCSDIM,                  "WCS dimensionality", &status);
@@ -440,7 +445,7 @@ int WCSTNX::WriteImage(const char* filepath) {
 	fits_update_key(fitsptr, TDOUBLE, "CD1_2",    &CD1_2,  "Coordinate matrix",          &status);
 	fits_update_key(fitsptr, TDOUBLE, "CD2_1",    &CD2_1,  "Coordinate matrix",          &status);
 	fits_update_key(fitsptr, TDOUBLE, "CD2_2",    &CD2_2,  "Coordinate matrix",          &status);
-	if (param_.valid[1]) {// 畸变改正项
+	if (model_.valid_res) {// 畸变改正项
 		char item[70]; // 每行实际可存储数据68字节
 		char keyword[10]; // 关键字
 		int i, j, byteleft, byteitem(68);
