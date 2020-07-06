@@ -653,6 +653,26 @@ public:
 	 * @param dec 赤纬, 量纲: 弧度
 	 */
 	void SunPosition(double& ra, double& dec);
+	/*!
+	 * @brief 当前时间地心坐标系的月球中心赤道坐标
+	 * @param ra   赤经, 量纲: 弧度
+	 * @param dec  赤纬, 量纲: 弧度
+	 */
+	void MoonPosition(double& ra, double& dec);
+	/*!
+	 * @brief 当前时间测站坐标系的月球中心赤道坐标
+	 * @param ra   赤经, 量纲: 弧度
+	 * @param dec  赤纬, 量纲: 弧度
+	 */
+	void MoonTopcentric(double& ra, double& dec);
+	/*!
+	 * @brief 当前时间的月相
+	 * @return
+	 * 月相
+	 * @note
+	 *
+	 */
+	double MoonPhase();
 
 public:
 	/*!

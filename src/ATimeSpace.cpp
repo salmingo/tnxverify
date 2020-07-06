@@ -779,6 +779,18 @@ void ATimeSpace::SunPosition(double& ra, double& dec) {
 	dec = values_[ATS_POSITION_SUN_DEC];
 }
 
+void ATimeSpace::MoonPosition(double& ra, double& dec) {
+
+}
+
+void ATimeSpace::MoonTopcentric(double& ra, double& dec) {
+
+}
+
+double ATimeSpace::MoonPhase() {
+	return 0.0;
+}
+
 void ATimeSpace::invalid_values() {
 	memset(valid_, 0, ATS_END * sizeof(bool));
 }
