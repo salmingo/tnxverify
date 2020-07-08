@@ -1,5 +1,5 @@
 bin_PROGRAMS=tnxverify
-tnxverify_SOURCES=AMath.cpp ATimeSpace.cpp ACatalog.cpp ACatUCAC4.cpp ProjectTNX.cpp tnxverify.cpp
+tnxverify_SOURCES=AMath.cpp ATimeSpace.cpp ACatalog.cpp ACatUCAC4.cpp WCSTNX.cpp tnxverify.cpp
 
 if DEBUG
   AM_CFLAGS = -g3 -O0 -Wall -DNDEBUG

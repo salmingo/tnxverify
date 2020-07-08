@@ -17,6 +17,9 @@ namespace AstroUtil {
 double SphereRange(double alpha1, double beta1, double alpha2, double beta2)
 {
 	double x = cos(beta1) * cos(beta2) * cos(alpha1 - alpha2) + sin(beta1) * sin(beta2);
+	// 截断误差可能导致|x|大于1
+	if (x > 1.0) x = 1.0;
+	else if (x < -1.0) x = -1.0;
 	return acos(x);
 }
 //////////////////////////////////////////////////////////////////////////////

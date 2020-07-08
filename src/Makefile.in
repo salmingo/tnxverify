@@ -102,7 +102,7 @@ CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(bindir)"
 PROGRAMS = $(bin_PROGRAMS)
 am_tnxverify_OBJECTS = AMath.$(OBJEXT) ATimeSpace.$(OBJEXT) \
-	ACatalog.$(OBJEXT) ACatUCAC4.$(OBJEXT) ProjectTNX.$(OBJEXT) \
+	ACatalog.$(OBJEXT) ACatUCAC4.$(OBJEXT) WCSTNX.$(OBJEXT) \
 	tnxverify.$(OBJEXT)
 tnxverify_OBJECTS = $(am_tnxverify_OBJECTS)
 am__DEPENDENCIES_1 =
@@ -126,7 +126,7 @@ depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/ACatUCAC4.Po ./$(DEPDIR)/ACatalog.Po \
 	./$(DEPDIR)/AMath.Po ./$(DEPDIR)/ATimeSpace.Po \
-	./$(DEPDIR)/ProjectTNX.Po ./$(DEPDIR)/tnxverify.Po
+	./$(DEPDIR)/WCSTNX.Po ./$(DEPDIR)/tnxverify.Po
 am__mv = mv -f
 CXXCOMPILE = $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
 	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS)
@@ -272,7 +272,7 @@ target_vendor = @target_vendor@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-tnxverify_SOURCES = AMath.cpp ATimeSpace.cpp ACatalog.cpp ACatUCAC4.cpp ProjectTNX.cpp tnxverify.cpp
+tnxverify_SOURCES = AMath.cpp ATimeSpace.cpp ACatalog.cpp ACatUCAC4.cpp WCSTNX.cpp tnxverify.cpp
 @DEBUG_FALSE@AM_CFLAGS = -O3 -Wall
 @DEBUG_TRUE@AM_CFLAGS = -g3 -O0 -Wall -DNDEBUG
 @DEBUG_FALSE@AM_CXXFLAGS = -O3 -Wall
@@ -370,7 +370,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ACatalog.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/AMath.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ATimeSpace.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ProjectTNX.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/WCSTNX.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tnxverify.Po@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
@@ -524,7 +524,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/ACatalog.Po
 	-rm -f ./$(DEPDIR)/AMath.Po
 	-rm -f ./$(DEPDIR)/ATimeSpace.Po
-	-rm -f ./$(DEPDIR)/ProjectTNX.Po
+	-rm -f ./$(DEPDIR)/WCSTNX.Po
 	-rm -f ./$(DEPDIR)/tnxverify.Po
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
@@ -575,7 +575,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/ACatalog.Po
 	-rm -f ./$(DEPDIR)/AMath.Po
 	-rm -f ./$(DEPDIR)/ATimeSpace.Po
-	-rm -f ./$(DEPDIR)/ProjectTNX.Po
+	-rm -f ./$(DEPDIR)/WCSTNX.Po
 	-rm -f ./$(DEPDIR)/tnxverify.Po
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic

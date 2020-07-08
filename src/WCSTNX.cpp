@@ -24,8 +24,31 @@
 #include "WCSTNX.h"
 
 using namespace std;
-
+//////////////////////////////////////////////////////////////////////////////
 namespace AstroUtil {
+//////////////////////////////////////////////////////////////////////////////
+void power_array(double value, double min, double max, int order, double *ptr) {
+	ptr[0] = 1.0;
+	for (int i = 1; i < order; ++i) ptr[i] = value * ptr[i - 1];
+}
+
+void legendre_array(double value, double min, double max, int order, double *ptr) {
+	double norm = ((max + min) - 2.0 * value) / (max - min);
+
+	ptr[0] = 1.0;
+	ptr[1] = norm;
+	for (int i = 2; i < order; ++i) {
+		ptr[i] = ((2 * i - 1) * norm * ptr[i - 1] - (i - 1) * ptr[i - 2]) / i;
+	}
+}
+
+void chebyshev_array(double value, double min, double max, int order, double *ptr) {
+	double norm = ((max + min) - 2.0 * value) / (max - min);
+
+	ptr[0] = 1.0;
+	ptr[1] = norm;
+	for (int i = 2; i < order; ++i) ptr[i] = 2 * norm * ptr[i - 1] - ptr[i - 2];
+}
 //////////////////////////////////////////////////////////////////////////////
 /* TNX投影的畸变改正 */
 PrjTNXRes::PrjTNXRes() {
@@ -135,39 +158,24 @@ void PrjTNXRes::free_array(double **ptr) {
 	}
 }
 
-void PrjTNXRes::power_array(double value, double min, double max, int order, double *ptr) {
-	ptr[0] = 1.0;
-	for (int i = 1; i < order; ++i) ptr[i] = value * ptr[i - 1];
-}
-
-void PrjTNXRes::legendre_array(double value, double min, double max, int order, double *ptr) {
-	double norm = ((max + min) - 2.0 * value) / (max - min);
-
-	ptr[0] = 1.0;
-	ptr[1] = norm;
-	for (int i = 2; i < order; ++i) {
-		ptr[i] = ((2 * i - 1) * norm * ptr[i - 1] - (i - 1) * ptr[i - 2]) / i;
-	}
-}
-
-void PrjTNXRes::chebyshev_array(double value, double min, double max, int order, double *ptr) {
-	double norm = ((max + min) - 2.0 * value) / (max - min);
-
-	ptr[0] = 1.0;
-	ptr[1] = norm;
-	for (int i = 2; i < order; ++i) ptr[i] = 2 * norm * ptr[i - 1] - ptr[i - 2];
-}
-
 //////////////////////////////////////////////////////////////////////////////
 /* TNX投影+模型 */
+void PrjTNX::SetNormalRange(double xmin, double ymin, double xmax, double ymax) {
+	res[0].SetRange(xmin, ymin, xmax, ymax);
+	res[1].SetRange(xmin, ymin, xmax, ymax);
+}
+
+void PrjTNX::SetParamRes(int func, int xterm, int xorder, int yorder) {
+	res[0].SetParam(func, xterm, xorder, yorder);
+	res[1].SetParam(func, xterm, xorder, yorder);
+}
+
 void PrjTNX::Image2WCS(double x, double y, double &ra, double &dc) {
 	double xi, eta;
 	Image2Plane(x, y, xi, eta);
 	xi  += res[0].PolyVal(x, y) * AS2R;
 	eta += res[1].PolyVal(x, y) * AS2R;
 	Plane2WCS(xi, eta, ra, dc);
-	ra *= R2D;
-	dc *= R2D;
 }
 
 void PrjTNX::WCS2Image(double ra, double dc, double &x, double &y) {
@@ -214,29 +222,19 @@ void PrjTNX::Plane2Image(double xi, double eta, double &x, double &y) {
 //////////////////////////////////////////////////////////////////////////////
 /* TNX WCS接口 */
 WCSTNX::WCSTNX() {
-
+	model_ = NULL;
 }
 
 WCSTNX::~WCSTNX() {
 
 }
 
-const PrjTNX *WCSTNX::GetModel() {
-	return &model_;
-}
-
-void WCSTNX::SetNormalRange(double xmin, double ymin, double xmax, double ymax) {
-	model_.res[0].SetRange(xmin, ymin, xmax, ymax);
-	model_.res[1].SetRange(xmin, ymin, xmax, ymax);
-}
-
-void WCSTNX::SetParamRes(int func, int xterm, int xorder, int yorder) {
-	model_.res[0].SetParam(func, xterm, xorder, yorder);
-	model_.res[1].SetParam(func, xterm, xorder, yorder);
+void WCSTNX::SetModel(PrjTNX* model) {
+	model_ = model;
 }
 
 int WCSTNX::LoadImage(const char* filepath) {
-	model_.valid_cd = model_.valid_res = false;
+	model_->valid_cd = model_->valid_res = false;
 
 	char keyword[10], value[70], CTYPE1[10], CTYPE2[10];
 	char strcor[2][2048], (*ptr)[2048];
@@ -253,20 +251,20 @@ int WCSTNX::LoadImage(const char* filepath) {
 		return -2;
 
 	// 检查参考点及转换矩阵
-	fits_read_key(fitsptr, TDOUBLE, "CRVAL1", &model_.ref_wcsx, NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CRVAL2", &model_.ref_wcsx, NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CRPIX1", &model_.ref_pixx, NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CRPIX2", &model_.ref_pixy, NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CD1_1",  &model_.cd[0][0], NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CD1_2",  &model_.cd[0][1], NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CD2_1",  &model_.cd[1][0], NULL, &status);
-	fits_read_key(fitsptr, TDOUBLE, "CD2_2",  &model_.cd[1][1], NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CRVAL1", &model_->ref_wcsx, NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CRVAL2", &model_->ref_wcsx, NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CRPIX1", &model_->ref_pixx, NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CRPIX2", &model_->ref_pixy, NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CD1_1",  &model_->cd[0][0], NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CD1_2",  &model_->cd[0][1], NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CD2_1",  &model_->cd[1][0], NULL, &status);
+	fits_read_key(fitsptr, TDOUBLE, "CD2_2",  &model_->cd[1][1], NULL, &status);
 	if (status) return -3;
-	model_.valid_cd = true;
+	model_->valid_cd = true;
 	// 生成逆转换矩阵
 	AMath math;
-	memcpy(&model_.ccd[0][0], &model_.cd[0][0], sizeof(model_.cd));
-	math.MatrixInvert(2, &model_.ccd[0][0]);
+	memcpy(&model_->ccd[0][0], &model_->cd[0][0], sizeof(model_->cd));
+	math.MatrixInvert(2, &model_->ccd[0][0]);
 	// 读取畸变改正项
 	fits_read_key(fitsptr, TSTRING, "WAT1_001", value, NULL, &status);
 	fits_read_key(fitsptr, TSTRING, "WAT2_001", value, NULL, &status);
@@ -287,10 +285,10 @@ int WCSTNX::LoadImage(const char* filepath) {
 		}
 	}
 	fits_close_file(fitsptr, &status);
-	model_.valid_res = !(resolve_residual(&strcor[0][0], &model_.res[0])
-			|| resolve_residual(&strcor[1][0], &model_.res[1]));
+	model_->valid_res = !(resolve_residual(&strcor[0][0], &model_->res[0])
+			|| resolve_residual(&strcor[1][0], &model_->res[1]));
 
-	return model_.valid_res ? 0 : -5;
+	return model_->valid_res ? 0 : -5;
 }
 
 bool WCSTNX::LoadText(const char* filepath) {
@@ -302,20 +300,20 @@ bool WCSTNX::LoadText(const char* filepath) {
 	char *token, *token1;
 	PrjTNXRes res1[2];
 
-	model_.valid_cd = model_.valid_res = false;
+	model_->valid_cd = model_->valid_res = false;
 
 	while(!feof(fp)) {
 		if (fgets(line, size, fp) == NULL) continue;
 		token = strtok(line, seps);
 
-		if      (!strcmp(token, "xpixref")) model_.ref_pixx = atof(strtok(NULL, seps));
-		else if (!strcmp(token, "ypixref")) model_.ref_pixy = atof(strtok(NULL, seps));
-		else if (!strcmp(token, "lngref"))  model_.ref_wcsx = atof(strtok(NULL, seps)) * D2R;
-		else if (!strcmp(token, "latref"))  model_.ref_wcsy = atof(strtok(NULL, seps)) * D2R;
+		if      (!strcmp(token, "xpixref")) model_->ref_pixx = atof(strtok(NULL, seps));
+		else if (!strcmp(token, "ypixref")) model_->ref_pixy = atof(strtok(NULL, seps));
+		else if (!strcmp(token, "lngref"))  model_->ref_wcsx = atof(strtok(NULL, seps)) * D2R;
+		else if (!strcmp(token, "latref"))  model_->ref_wcsy = atof(strtok(NULL, seps)) * D2R;
 		else if (token[0] == 's') {
 			int srfc = !strcmp(token, "surface1") ? 1 : (!strcmp(token, "surface2") ? 2 : 0);
 			if (srfc) {
-				PrjTNXRes *res = srfc == 1 ? &res1[0] : &model_.res[0];
+				PrjTNXRes *res = srfc == 1 ? &res1[0] : &model_->res[0];
 				int i, j, n;
 				bool valid(true);
 
@@ -355,30 +353,30 @@ bool WCSTNX::LoadText(const char* filepath) {
 					else if (i == 7) { res[0].ymax = atof(token); res[1].ymax = atof(token1); }
 				}
 				if (n && i == n && valid) {
-					if (srfc == 1) model_.valid_cd = true;
-					else model_.valid_res = true;
+					if (srfc == 1) model_->valid_cd = true;
+					else model_->valid_res = true;
 				}
 			}
 		}
 	}
 	fclose(fp);
 
-	if (model_.valid_cd) {// 计算旋转矩阵
-		model_.cd[0][0] = 2 * res1[0].coef[1] * AS2D / (res1[0].xmax - res1[0].xmin);
-		model_.cd[0][1] = 2 * res1[0].coef[2] * AS2D / (res1[0].ymax - res1[0].ymin);
-		model_.cd[1][0] = 2 * res1[1].coef[1] * AS2D / (res1[1].xmax - res1[1].xmin);
-		model_.cd[1][1] = 2 * res1[1].coef[2] * AS2D / (res1[1].ymax - res1[1].ymin);
+	if (model_->valid_cd) {// 计算旋转矩阵
+		model_->cd[0][0] = 2 * res1[0].coef[1] * AS2D / (res1[0].xmax - res1[0].xmin);
+		model_->cd[0][1] = 2 * res1[0].coef[2] * AS2D / (res1[0].ymax - res1[0].ymin);
+		model_->cd[1][0] = 2 * res1[1].coef[1] * AS2D / (res1[1].xmax - res1[1].xmin);
+		model_->cd[1][1] = 2 * res1[1].coef[2] * AS2D / (res1[1].ymax - res1[1].ymin);
 
 		AMath math;
-		memcpy(&model_.ccd[0][0], &model_.cd[0][0], sizeof(model_.cd));
-		math.MatrixInvert(2, &model_.ccd[0][0]);
+		memcpy(&model_->ccd[0][0], &model_->cd[0][0], sizeof(model_->cd));
+		math.MatrixInvert(2, &model_->ccd[0][0]);
 	}
 
-	return model_.valid_cd;
+	return model_->valid_cd;
 }
 
 int WCSTNX::WriteImage(const char* filepath) {
-	if (!model_.valid_cd) return -1; // 至少需要线性项
+	if (!model_->valid_cd) return -1; // 至少需要线性项
 
 	string WCSASTRM = "ct4m.19990714T012701 (USNO-K V) by F. Valdes 1999-08-02";
 	string CTYPE1 = "RA---TNX";
@@ -387,18 +385,17 @@ int WCSTNX::WriteImage(const char* filepath) {
 	string WAT1 = "wtype=tnx axtype=ra lngcor = ";
 	string WAT2 = "wtype=tnx axtype=dec latcor = ";
 	int WCSDIM = 2;
-	double CRVAL1 = model_.ref_wcsx;
-	double CRVAL2 = model_.ref_wcsy;
-	double CRPIX1 = model_.ref_pixx;
-	double CRPIX2 = model_.ref_pixy;
-	double CD1_1  = model_.cd[0][0];
-	double CD1_2  = model_.cd[0][1];
-	double CD2_1  = model_.cd[1][0];
-	double CD2_2  = model_.cd[1][1];
-	int status(0);
+	double CRVAL1 = model_->ref_wcsx;
+	double CRVAL2 = model_->ref_wcsy;
+	double CRPIX1 = model_->ref_pixx;
+	double CRPIX2 = model_->ref_pixy;
+	double CD1_1  = model_->cd[0][0];
+	double CD1_2  = model_->cd[0][1];
+	double CD2_1  = model_->cd[1][0];
+	double CD2_2  = model_->cd[1][1];
 
-	if (model_.valid_res) {
-		PrjTNXRes *res = &model_.res[0];
+	if (model_->valid_res) {
+		PrjTNXRes *res = &model_->res[0];
 		int n, nc, i, j;
 		char strcor[2][2048];
 		char txtdbl[20];
@@ -445,11 +442,11 @@ int WCSTNX::WriteImage(const char* filepath) {
 	fits_update_key(fitsptr, TDOUBLE, "CD1_2",    &CD1_2,  "Coordinate matrix",          &status);
 	fits_update_key(fitsptr, TDOUBLE, "CD2_1",    &CD2_1,  "Coordinate matrix",          &status);
 	fits_update_key(fitsptr, TDOUBLE, "CD2_2",    &CD2_2,  "Coordinate matrix",          &status);
-	if (model_.valid_res) {// 畸变改正项
+	if (model_->valid_res) {// 畸变改正项
 		char item[70]; // 每行实际可存储数据68字节
 		char keyword[10]; // 关键字
 		int i, j, byteleft, byteitem(68);
-		int len[] = { WAT1.size(), WAT2.size() };
+		int len[2] = { int(WAT1.size()), int(WAT2.size()) };
 		const char *head[] = { WAT1.c_str(), WAT2.c_str() };
 		const char *ptr;
 
@@ -526,11 +523,11 @@ int WCSTNX::output_precision_double(char *output, double value) {
 }
 
 bool WCSTNX::PrepareFit(double refx, double refy) {
-	if (!(model_.res[0].Initialize() && model_.res[1].Initialize())) return false;
+	if (!(model_->res[0].Initialize() && model_->res[1].Initialize())) return false;
 
 	stars_.clear();
-	model_.ref_pixx = refx;
-	model_.ref_pixy = refy;
+	model_->ref_pixx = refx;
+	model_->ref_pixy = refy;
 
 	return true;
 }
@@ -540,52 +537,52 @@ void WCSTNX::AddSample(const MatchedStar &matstar) {
 }
 
 int WCSTNX::ProcessFit() {
-	if (stars_.size() <= model_.res[0].nitem) return 1;	// 样本不足
+	if (stars_.size() < model_->res[0].nitem) return 1;	// 样本不足
 
-	PrjTNXRes *res = model_.res;
-	double refx(model_.ref_pixx), refy(model_.ref_pixy);
+	PrjTNXRes *res = model_->res;
+	double refx(model_->ref_pixx), refy(model_->ref_pixy);
 	bool xauto = refx < res->xmin || refy > res->xmax;
 	bool yauto = refy < res->ymin || refy > res->ymax;
 	// 选择中心点作为投影中心
-	if (xauto) model_.ref_pixx = (res->xmin + res->xmax) * 0.5;
-	if (yauto) model_.ref_pixy = (res->ymin + res->ymax) * 0.5;
+	if (xauto) model_->ref_pixx = (res->xmin + res->xmax) * 0.5;
+	if (yauto) model_->ref_pixy = (res->ymin + res->ymax) * 0.5;
 	// 选择最接近参考点的参考星作为投影中心. (refx, refy)保存输入值
-	find_nearest(model_.ref_pixx, model_.ref_pixy, model_.ref_wcsx, model_.ref_wcsy);
+	find_nearest(model_->ref_pixx, model_->ref_pixy, model_->ref_wcsx, model_->ref_wcsy);
 	if (!try_fit()) return 2;
 	if (!(xauto && yauto)) {// 使用新的参考点重新拟合模型
 		double x, y, refr, refd;
-		x = xauto ? model_.ref_pixx : refx;
-		y = yauto ? model_.ref_pixy : refy;
-		model_.Image2WCS(x, y, refr, refd);
-		model_.ref_pixx = x;
-		model_.ref_pixy = y;
-		model_.ref_wcsx = refr;
-		model_.ref_wcsy = refd;
+		x = xauto ? model_->ref_pixx : refx;
+		y = yauto ? model_->ref_pixy : refy;
+		model_->Image2WCS(x, y, refr, refd);
+		model_->ref_pixx = x;
+		model_->ref_pixy = y;
+		model_->ref_wcsx = refr;
+		model_->ref_wcsy = refd;
 		try_fit();
 	}
 	// 计算拟合结果
 	AMath math;
 	// 计算逆旋转矩阵
-	memcpy(&model_.ccd[0][0], &model_.cd[0][0], sizeof(model_.ccd));
-	math.MatrixInvert(2, &model_.ccd[0][0]);
+	memcpy(&model_->ccd[0][0], &model_->cd[0][0], sizeof(model_->ccd));
+	math.MatrixInvert(2, &model_->ccd[0][0]);
 	// 计算倾角
-	model_.rotation = atan2(model_.cd[0][1], model_.cd[0][0]) * R2D;
+	model_->rotation = atan2(model_->cd[0][1], model_->cd[0][0]) * R2D;
 	// 计算像元比例尺
 	double tmp[2][2];
-	memcpy(&tmp[0][0], &model_.cd[0][0], sizeof(model_.ccd));
-	model_.scale = R2AS * sqrt(math.LUDet(2, &tmp[0][0]));
+	memcpy(&tmp[0][0], &model_->cd[0][0], sizeof(model_->ccd));
+	model_->scale = D2AS * sqrt(math.LUDet(2, &tmp[0][0]));
 	// 计算拟合残差
 	double esum(0.0), esq(0.0);
 	int i, n(stars_.size());
 	double ra, dc, t;
 
 	for (i = 0; i < n; ++i) {
-		model_.Image2WCS(stars_[i].x, stars_[i].y, ra, dc);
-		t = SphereRange(ra * D2R, dc * D2R, stars_[i].ra * D2R, stars_[i].dc * D2R);
+		model_->Image2WCS(stars_[i].x, stars_[i].y, ra, dc);
+		t = SphereRange(ra, dc, stars_[i].ra * D2R, stars_[i].dc * D2R);
 		esum += t;
 		esq  += (t * t);
 	}
-	model_.errfit = sqrt((esq - esum * esum / n) / n) * R2AS;
+	model_->errfit = sqrt((esq - esum * esum / n) / n) * R2AS;
 
 	return 0;
 }
@@ -603,39 +600,39 @@ void WCSTNX::find_nearest(double &refx, double &refy, double &refr, double &refd
 	}
 	refx = stars_[j].x;
 	refy = stars_[j].y;
-	refr = stars_[j].ra;
-	refd = stars_[j].dc;
+	refr = stars_[j].ra * D2R;	// 弧度
+	refd = stars_[j].dc * D2R;
 }
 
 bool WCSTNX::try_fit() {
 	bool rslt;
 	int n(stars_.size()), i;
 	double *X, *Y, xi, eta;
-	double x0(model_.ref_pixx), y0(model_.ref_pixy);
+	double x0(model_->ref_pixx), y0(model_->ref_pixy);
 	AMath math;
 
 	X = (double*) calloc(2*n, sizeof(double));
 	Y = (double*) calloc(2*n, sizeof(double));
 	for (i = 0; i < n; ++i) {
-		model_.WCS2Plane(stars_[i].ra * D2R, stars_[i].dc * D2R, xi, eta);
+		model_->WCS2Plane(stars_[i].ra * D2R, stars_[i].dc * D2R, xi, eta);
 		X[i]     = stars_[i].x - x0;
 		X[n + i] = stars_[i].y - y0;
 		Y[i]     = xi * R2D;
 		Y[n + i] = eta * R2D;
 	}
 	// 拟合转换矩阵
-	rslt = math.LSFitLinear(n, 2, X, Y, &model_.cd[0][0])
-			&& math.LSFitLinear(n, 2, X, Y + n, &model_.cd[1][0]);
+	rslt = math.LSFitLinear(n, 2, X, Y, &model_->cd[0][0])
+			&& math.LSFitLinear(n, 2, X, Y + n, &model_->cd[1][0]);
 
 	if (rslt) {// 拟合畸变残差
-		PrjTNXRes *res = model_.res;
-		int nitem = model_.res[0].nitem;
+		PrjTNXRes *res = model_->res;
+		int nitem = model_->res[0].nitem;
 		double *X1 = (double *) calloc(nitem * n, sizeof(double));
 		double *X2 = (double *) calloc(nitem * n, sizeof(double));
 		double *ptr;
 
 		for (i = 0, ptr = X2; i < n; ++i, ptr += nitem) {
-			model_.Image2Plane(stars_[i].x, stars_[i].y, xi, eta);
+			model_->Image2Plane(stars_[i].x, stars_[i].y, xi, eta);
 			Y[i]     = (Y[i] * D2R - xi) * R2AS;
 			Y[n + i] = (Y[n + i] * D2R - eta) * R2AS;
 			res->ItemVector(stars_[i].x, stars_[i].y, ptr);

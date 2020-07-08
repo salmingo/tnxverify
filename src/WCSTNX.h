@@ -46,6 +46,26 @@ enum {// 多项式交叉系数类型
 };
 
 /*!
+ * @brief 基函数
+ * @param value   自变量
+ * @param min     最小值
+ * @param max     最大值
+ * @param order   阶次
+ * @param ptr     存储区
+ * @note
+ * - power_array:     幂函数
+ * - legendre_array:  勒让德函数
+ * - chebyshev_array: 切比雪夫函数
+ */
+extern void power_array(double value, double min, double max, int order, double *ptr);
+extern void legendre_array(double value, double min, double max, int order, double *ptr);
+extern void chebyshev_array(double value, double min, double max, int order, double *ptr);
+/*!
+ * @function WCSTNXFunc WCSTNX中模型拟合的基函数
+ */
+typedef void (*WCSTNXFunc)(double, double, double, int, double *);
+
+/*!
  * @struct PrjTNXRes  TNX投影残差模型参数
  * @note
  * - 计算畸变残差
@@ -53,10 +73,6 @@ enum {// 多项式交叉系数类型
  * - 残差量纲: 角秒
  */
 struct PrjTNXRes {
-	/*!
-	 * @function WCSTNXFunc WCSTNX中模型拟合的基函数
-	 */
-	typedef void (*WCSTNXFunc)(double, double, double, int, double *);
 	/* 用户 */
 	int func;	/// 基函数类型
 	int xterm;	/// 交叉项类型
@@ -124,21 +140,6 @@ protected:
 	 * @param ptr  缓存区地址
 	 */
 	void free_array(double **ptr);
-	/*!
-	 * @brief 基函数
-	 * @param value   自变量
-	 * @param min     最小值
-	 * @param max     最大值
-	 * @param order   阶次
-	 * @param ptr     存储区
-	 * @note
-	 * - power_array:     幂函数
-	 * - legendre_array:  勒让德函数
-	 * - chebyshev_array: 切比雪夫函数
-	 */
-	void power_array(double value, double min, double max, int order, double *ptr);
-	void legendre_array(double value, double min, double max, int order, double *ptr);
-	void chebyshev_array(double value, double min, double max, int order, double *ptr);
 };
 
 /*!
@@ -149,29 +150,47 @@ protected:
  */
 struct PrjTNX {
 	bool valid_cd, valid_res;	/// 模型拟合成功标志
+	double scale;		/// 像元比例尺, 量纲: 角秒/像素
+	double rotation;	/// X轴与投影平面X轴正向夹角, 量纲: 角度
+	double errfit;		/// 拟合残差, 量纲: 角秒
 	double ref_pixx, ref_pixy;	/// 参考点XY坐标
 	double ref_wcsx, ref_wcsy;	/// 参考点世界坐标, 量纲: 弧度
 	double cd[2][2];	/// XY->WCS的转换矩阵, 量纲: 角度/像素
 	double ccd[2][2];	/// WCS->XY的转换矩阵, 量纲: 像素/角度
 	PrjTNXRes res[2];	/// 残差/畸变参数及模型
-	double scale;		/// 像元比例尺, 量纲: 角秒/像素
-	double rotation;	/// X轴与投影平面X轴正向夹角, 量纲: 角度
-	double errfit;		/// 拟合残差, 量纲: 角秒
 
 /* 接口 */
+public:
+	/*!
+	 * @brief 设置归一化范围
+	 * @param xmin  X最小值
+	 * @param ymin  Y最小值
+	 * @param xmax  X最大值
+	 * @param ymax  Y最大值
+	 */
+	void SetNormalRange(double xmin, double ymin, double xmax, double ymax);
+	/*!
+	 * @brief 设置畸变残差拟合参数
+	 * @param func    基函数类型
+	 * @param xterm   交叉项类型
+	 * @param xorder  X阶次
+	 * @param yorder  Y阶次
+	 */
+	void SetParamRes(int func, int xterm, int xorder, int yorder);
+
 public:
 	/*!
 	 * @brief 使用模型, 由XY计算世界坐标
 	 * @param x    坐标X
 	 * @param y    坐标Y
-	 * @param ra   世界坐标X, 量纲: 角度
-	 * @param dc   世界坐标Y, 量纲: 角度
+	 * @param ra   世界坐标X, 量纲: 弧度
+	 * @param dc   世界坐标Y, 量纲: 弧度
 	 */
 	void Image2WCS(double x, double y, double &ra, double &dc);
 	/*!
 	 * @brief 使用模型, 由世界坐标计算XY
-	 * @param ra   世界坐标X, 量纲: 角度
-	 * @param dc   世界坐标Y, 量纲: 角度
+	 * @param ra   世界坐标X, 量纲: 弧度
+	 * @param dc   世界坐标Y, 量纲: 弧度
 	 * @param x    坐标X
 	 * @param y    坐标Y
 	 */
@@ -218,33 +237,15 @@ public:
 
 /* 成员变量 */
 protected:
-	PrjTNX model_;		/// TNX投影模型
+	PrjTNX* model_;		/// TNX投影模型
 	MatStarVec stars_;	/// 用于拟合模型的样本
 
 /* 接口 */
 public:
 	/*!
-	 * @brief 访问TNX模型
-	 * @return
-	 * 模型地址
+	 * @brief 设置TNX模型
 	 */
-	const PrjTNX *GetModel();
-	/*!
-	 * @brief 设置归一化范围
-	 * @param xmin  X最小值
-	 * @param ymin  Y最小值
-	 * @param xmax  X最大值
-	 * @param ymax  Y最大值
-	 */
-	void SetNormalRange(double xmin, double ymin, double xmax, double ymax);
-	/*!
-	 * @brief 设置畸变残差拟合参数
-	 * @param func    基函数类型
-	 * @param xterm   交叉项类型
-	 * @param xorder  X阶次
-	 * @param yorder  Y阶次
-	 */
-	void SetParamRes(int func, int xterm, int xorder, int yorder);
+	void SetModel(PrjTNX * model);
 
 public:
 	/*!

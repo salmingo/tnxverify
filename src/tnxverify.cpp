@@ -19,6 +19,8 @@
  - 从Ast生成的.wcs中提取WCS模型
  - 由WCS模型计算(ra2,dc2)
  - 由TNX模型计算(x2,y2)对应的(ra3,dc3)
+ - 从UCAC4中查找与(ra3, dc3)匹配的参考星
+ - 评估定位精度；输出匹配恒星信息
  **/
 
 #include <cstdio>
@@ -30,8 +32,9 @@
 #include <fitsio.h>
 #include "ADefine.h"
 #include "ADIData.h"
-#include "ProjectTNX.h"
 #include "ACatUCAC4.h"
+#include "FITSHandler.hpp"
+#include "WCSTNX.h"
 
 using namespace std;
 using namespace boost::filesystem;
@@ -278,24 +281,25 @@ void resolve_dateobs(const string &filepath, ImgFrmPtr frame) {
  * @param filepath  文件路径
  * @param frame     数据结构
  */
-void refstar_from_list(const string &filepath, ImgFrmPtr frame) {
-	fitsfile *fitsptr;	//< 基于cfitsio接口的文件操作接口
+void refstar_from_list(const string &filepath, WCSTNX& wcstnx) {
+	FITSHandler hfit;
 	int status(0);
+	int nhdu;
+	const int* hdutype;
 	long nrows;
 	double *ra, *dc, *x, *y;
 
 	// 从.rdls读取赤经赤纬
 	path rdls = filepath;
 	rdls.replace_extension(".rdls");
-	fits_open_file(&fitsptr, rdls.c_str(), 0, &status);
-	fits_get_num_rows(fitsptr, &nrows, &status);
+	hfit(rdls.c_str());
+	fits_get_num_rows(hfit(), &nrows, &status);
 	ra = new double[nrows];
 	dc = new double[nrows];
 	x  = new double[nrows];
 	y  = new double[nrows];
-	fits_read_col(fitsptr, TDOUBLE, 1, 1, 1, nrows, NULL, ra, NULL, &status);
-	fits_read_col(fitsptr, TDOUBLE, 2, 1, 1, nrows, NULL, dc, NULL, &status);
-	fits_close_file(fitsptr, &status);
+	fits_read_col(hfit(), TDOUBLE, 1, 1, 1, nrows, NULL, ra, NULL, &status);
+	fits_read_col(hfit(), TDOUBLE, 2, 1, 1, nrows, NULL, dc, NULL, &status);
 
 	// 从.xyls读取XY
 	path filename = path(filepath).stem();
@@ -303,21 +307,19 @@ void refstar_from_list(const string &filepath, ImgFrmPtr frame) {
 
 	filename += "-indx.xyls";
 	xyls /= filename;
-	fits_open_file(&fitsptr, xyls.c_str(), 0, &status);
-	fits_read_col(fitsptr, TDOUBLE, 1, 1, 1, nrows, NULL, x, NULL, &status);
-	fits_read_col(fitsptr, TDOUBLE, 2, 1, 1, nrows, NULL, y, NULL, &status);
-	fits_close_file(fitsptr, &status);
+	hfit(xyls.c_str());
+	fits_read_col(hfit(), TDOUBLE, 1, 1, 1, nrows, NULL, x, NULL, &status);
+	fits_read_col(hfit(), TDOUBLE, 2, 1, 1, nrows, NULL, y, NULL, &status);
 
-	// 填充frame
-	NFObjVector &nfobj = frame->nfobj;
+	// 填充参考星
+	wcstnx.PrepareFit();
 	for (long i = 0; i < nrows; ++i) {
-		ObjectInfo obj;
-		obj.ptbc.x  = x[i];
-		obj.ptbc.y  = y[i];
-		obj.ra_cat  = ra[i];
-		obj.dec_cat = dc[i];
-		obj.matched = 1;
-		nfobj.push_back(obj);
+		MatchedStar star;
+		star.x   = x[i];
+		star.y   = y[i];
+		star.ra  = ra[i];
+		star.dc  = dc[i];
+		wcstnx.AddSample(star);
 	}
 
 	delete []ra;
@@ -337,9 +339,9 @@ void take_xy(const string &filepath, ImgFrmPtr frame) {
 	char line[200];
 	double x, y, flux;
 	NFObjVector &nfobj = frame->nfobj;
+	nfobj.clear();
 
 	pathname.replace_extension(".cat");
-	frame->nfobj.clear();
 	fp = fopen(pathname.c_str(), "r");
 	while (!feof(fp)) {
 		if (NULL == fgets(line, 200, fp) || line[0] == '#') continue;
@@ -398,24 +400,6 @@ void match_ucac4(ImgFrmPtr frame) {
 		}
 	}
 	printf (">> %d stars are matched\n", n);
-}
-
-/*!
- * @brief 拟合TNX模型
- * @param frame  数据结构
- * @param prj    TNX投影
- */
-bool fit_tnx(ImgFrmPtr frame, PrjTNXPtr prj) {
-	if (prj->ProcessFit(frame)) {
-		printf (">> scale:       %.2f\n", prj->scale);
-		printf (">> orientation: %.2f\n", prj->rotation);
-		printf (">> Residual:    %.2f\n", prj->errfit);
-		return true;
-	}
-	else {
-		printf (">> failed to do ProjectTNX fit\n");
-		return false;
-	}
 }
 
 /*!
@@ -483,11 +467,15 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 
 int main(int argc, char **argv) {
 	ImgFrmPtr frame = boost::make_shared<ImageFrame>();
-	PrjTNXPtr prjtnx = boost::make_shared<ProjectTNX>();
+	PrjTNX model;
+	WCSTNX wcstnx;
 	string extfit(".fit");	// 扩展名
 	string filepath;
+	double *ptr;
+	int i, j;
 
-	prjtnx->SetFitModel(TNX_LEGENDRE, X_FULL, 6, 6);
+	wcstnx.SetModel(&model);
+	model.SetParamRes(FUNC_LEGENDRE, X_FULL, 6, 6);
 
 	for (int i = 1; i < argc; ++i) {
 		path pathname = argv[i];
@@ -498,11 +486,29 @@ int main(int argc, char **argv) {
 				if (x->path().extension().string() == extfit && all_exists(filepath = x->path().string())) {
 					printf ("#### %s ####\n", filepath.c_str());
 					resolve_dateobs(filepath, frame);
-					prjtnx->SetRefXY(1, 1, frame->wdim, frame->hdim);
-					take_xy(filepath, frame);
-					rd_from_wcs(filepath, frame);
-					match_ucac4(frame);
-					if (fit_tnx(frame, prjtnx)) final_stat(filepath, frame);
+					model.SetNormalRange(1, 1, frame->wdim, frame->hdim);
+					refstar_from_list(filepath, wcstnx);
+					if (!wcstnx.ProcessFit()) {
+						printf ("scale: %.3f, orientation: %.2f, error: %.3f\n",
+								model.scale, model.rotation, model.errfit);
+//						printf ("Rotation Matrix:\n");
+//						for (j = 0, ptr = &model.cd[0][0]; j < 2; ++j) {
+//							for (i = 0; i < 2; ++i, ++ptr) {
+//								printf ("%G  ", *ptr);
+//							}
+//							printf ("\n");
+//						}
+//						printf ("Residual 0:\n");
+//						for (i = 0, ptr = model.res[0].coef; i < model.res[0].nitem; ++i, ++ptr)
+//							printf ("\t %f\n", *ptr);
+//						printf ("Residual 1:\n");
+//						for (i = 0, ptr = model.res[1].coef; i < model.res[1].nitem; ++i, ++ptr)
+//							printf ("\t %f\n", *ptr);
+//						take_xy(filepath, frame);
+//						rd_from_wcs(filepath, frame);
+//						match_ucac4(frame);
+//						final_stat(filepath, frame);
+					}
 					printf ("\n");
 				}
 			}
@@ -513,11 +519,30 @@ int main(int argc, char **argv) {
 			if (all_exists(filepath)) {
 				printf ("#### %s ####\n", filepath.c_str());
 				resolve_dateobs(filepath, frame);
-				prjtnx->SetRefXY(1, 1, frame->wdim, frame->hdim);
-				take_xy(filepath, frame);
-				rd_from_wcs(filepath, frame);
-				match_ucac4(frame);
-				if (fit_tnx(frame, prjtnx)) final_stat(filepath, frame);
+				model.SetNormalRange(1, 1, frame->wdim, frame->hdim);
+				refstar_from_list(filepath, wcstnx);
+				if (!wcstnx.ProcessFit()) {
+					printf ("scale: %.3f arcsec/pixel, orientation: %.2f degrees, error: %.3f milli arcsecs\n",
+							model.scale, model.rotation, model.errfit * 1000.0);
+//					printf ("Rotation Matrix:\n");
+//					for (j = 0, ptr = &model.cd[0][0]; j < 2; ++j) {
+//						for (i = 0; i < 2; ++i, ++ptr) {
+//							printf ("%G  ", *ptr);
+//						}
+//						printf ("\n");
+//					}
+//					printf ("Residual 0:\n");
+//					for (i = 0, ptr = model.res[0].coef; i < model.res[0].nitem; ++i, ++ptr)
+//						printf ("\t %f\n", *ptr);
+//					printf ("Residual 1:\n");
+//					for (i = 0, ptr = model.res[1].coef; i < model.res[1].nitem; ++i, ++ptr)
+//						printf ("\t %f\n", *ptr);
+
+//					take_xy(filepath, frame);
+//					rd_from_wcs(filepath, frame);
+//					match_ucac4(frame);
+//					final_stat(filepath, frame);
+				}
 				printf ("\n");
 			}
 		}

@@ -54,7 +54,7 @@ AM_CONDITIONAL(DEBUG, test x"$debug" = x"true")
 
 AC_CHECK_HEADER_STDBOOL
 AC_CHECK_HEADERS([stdlib.h string.h strings.h unistd.h])
-AC_CHECK_FUNCS([bzero memset pow sqrt])
+AC_CHECK_FUNCS([bzero memset pow sqrt strcasecmp strpbrk strstr])
 
 AC_CONFIG_FILES(Makefile src/Makefile)
 AC_OUTPUT
