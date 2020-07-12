@@ -328,6 +328,21 @@ void refstar_from_list(const string &filepath, WCSTNX& wcstnx) {
 	delete []y;
 }
 
+void refstar_from_frame(ImgFrmPtr frame, WCSTNX& wcstnx) {
+	NFObjVector &nfobj = frame->nfobj;
+	wcstnx.PrepareFit();
+
+	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
+		if (x->matched != 1) continue;
+		MatchedStar star;
+		star.x   = x->ptbc.x;
+		star.y   = x->ptbc.y;
+		star.ra  = x->ra_cat;
+		star.dc  = x->dec_cat;
+		wcstnx.AddSample(star);
+	}
+}
+
 /*!
  * @brief 提取XY坐标
  * @param filepath  文件路径
@@ -376,25 +391,60 @@ void rd_from_wcs(const string &filepath, ImgFrmPtr frame) {
 }
 
 /*!
+ * @brief 由TNX模型拟合(ra3, dc3)
+ * @param frame  数据结构
+ * @param model  模型
+ */
+void rd_from_tnx(ImgFrmPtr frame, PrjTNX& model) {
+	NFObjVector &nfobj = frame->nfobj;
+
+	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
+		model.Image2WCS(x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
+		x->ra_fit  *= R2D;
+		x->dec_fit *= R2D;
+	}
+}
+
+/*!
  * @brief 与UCAC4匹配, 提取星表坐标
  * @param frame  数据结构
  */
 void match_ucac4(ImgFrmPtr frame) {
 	boost::shared_ptr<ACatUCAC4> ucac4 = boost::make_shared<ACatUCAC4>();
 	NFObjVector &nfobj = frame->nfobj;
-	int n(0), nfound;
-	double r(1.0);	//1角分半径
+	int n(0), nfound, i, j;
+	double r(0.8);	//1角分半径
 	double t; // 儒略年 * 0.1毫角秒转角秒系数
 	ucac4item_ptr starptr;
 
 	t = (frame->mjdobs - 51544.5) * 1E-4 / 365.25;
 	ucac4->SetPathRoot("/Users/lxm/Catalogue/UCAC4");
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
-		if (ucac4->FindStar(x->ra_inst, x->dec_inst, r) == 1) {
-			starptr = ucac4->GetResult(nfound);
-			x->dec_cat  = (double) starptr->spd / MILLISEC - 90.0;
-			x->ra_cat   = (double) starptr->ra / MILLISEC;// + starptr->pmrac * t * AS2D / cos(x->dec_cat * D2R);
-//			x->dec_cat += (starptr->pmdc * t * AS2D);
+		if ((nfound = ucac4->FindStar(x->ra_fit, x->dec_fit, r))) {
+			starptr = ucac4->GetResult();
+			if (nfound == 1) j = 0;
+			else {
+				double er, ed, emin(1E30), t, t1, cosd;
+				cosd = cos(x->dec_fit * D2R);
+				for (i = 0; i < nfound; ++i) {
+					ed = starptr[i].spd / MILLISEC - 90.0 - x->dec_fit;
+					er = starptr[i].ra / MILLISEC - x->ra_fit;
+					if (er > 180.0) er -= 360.0;
+					else if (er < -180.0) er += 360.0;
+					t1 = er * cosd;
+					t = t1 * t1 + ed * ed;
+					if (t < emin) {
+						j = i;
+						emin = t;
+					}
+				}
+			}
+
+			x->dec_pm   = starptr[j].pmdc * t;
+			x->dec_cat  = (double) starptr[j].spd / MILLISEC - 90.0 + x->dec_pm * AS2D;
+			x->ra_pm    = starptr[j].pmrac * t / cos(x->dec_cat * D2R);
+			x->ra_cat   = (double) starptr[j].ra / MILLISEC + x->ra_pm * AS2D;
+			x->mag_cat  = starptr[j].apasm[1] * 0.001;
 			x->matched = 1;
 			++n;
 		}
@@ -410,56 +460,52 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 	path pathname = filepath;
 	NFObjVector &nfobj = frame->nfobj;
 	FILE *fprslt;
-	double er1, er2, ed1, ed2, er3, ed3, er4, ed4, ra, dc;
-	boost::shared_ptr<ACatUCAC4> ucac4 = boost::make_shared<ACatUCAC4>();
-	int nfound;
-	double r(1.0);	// 1角分半径
-	double t = (frame->mjdobs - 51544.5) * 1E-4 / 365.25;
-	ucac4item_ptr starptr;
+	double er1, er2, ed1, ed2;
+	double esq_ra(0.0), esum_ra(0.0), esq_dc(0.0), esum_dc(0.0);
+	double mean_ra, mean_dc;
+	int n(0);
 
-	ucac4->SetPathRoot("/Users/lxm/Catalogue/UCAC4");
 	pathname.replace_extension(".txt");
 	fprslt = fopen(pathname.c_str(), "w");
 
+	fprintf (fprslt, "%6s %6s %8s %8s %7s %8s %8s %8s %8s\n",
+			"X", "Y", "RA_CAT", "DEC_CAT", "MAG_CAT", "RA_WCS", "DEC_WCS", "RA_TNX", "DEC_TNX");
+
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
 		if (x->matched != 1) continue;
-		er1 = x->ra_inst - x->ra_cat;
-		ed1 = (x->dec_inst - x->dec_cat) * 3600.0;
-		er2 = x->ra_fit - x->ra_cat;
-		ed2 = (x->dec_fit - x->dec_cat) * 3600.0;
+		er1 = x->ra_fit - x->ra_cat;
+		ed1 = (x->dec_fit - x->dec_cat) * 3600.0;
+		er2 = x->ra_inst - x->ra_fit;
+		ed2 = (x->dec_inst - x->dec_fit) * 3600.0;
 		if (er1 > 180.0) er1 -= 360.0;
 		else if (er1 < -180.0) er1 += 360.0;
 		if (er2 > 180.0) er2 -= 360.0;
 		else if (er2 < -180.0) er2 += 360.0;
+		er1 *= 3600.0;
+		er2 *= 3600.0;
 
-		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f %8.4f %8.4f %8.4f %8.4f | %5.1f %5.1f | %5.1f %5.1f",
+		esum_ra += er1;
+		esq_ra  += er1 * er1;
+		esum_dc += ed1;
+		esq_dc  += ed1 * ed1;
+		++n;
+
+		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f %7.3f %8.4f %8.4f %8.4f %8.4f %5.1f %5.1f | %5.1f %5.1f | %5.1f %5.1f\n",
 				x->ptbc.x, x->ptbc.y,
-				x->ra_cat, x->dec_cat,
+				x->ra_cat, x->dec_cat, x->mag_cat,
 				x->ra_inst, x->dec_inst,
 				x->ra_fit, x->dec_fit,
-				er1 * 3600.0, ed1,
-				er2 * 3600.0, ed2);
-
-		if (ucac4->FindStar(x->ra_fit, x->dec_fit, r) != 1) fprintf (fprslt, "\n");
-		else {
-			starptr = ucac4->GetResult(nfound);
-			dc  = (double) starptr->spd / MILLISEC - 90.0;
-			ra   = (double) starptr->ra / MILLISEC;// + starptr->pmrac * t * AS2D / cos(x->dec_cat * D2R);
-//			dc += (starptr->pmdc * t * AS2D);
-
-			er3 = ra - x->ra_cat;
-			ed3 = (dc - x->dec_cat) * 3600.0;
-			er4 = x->ra_fit - ra;
-			ed4 = (x->dec_fit - dc) * 3600.0;
-			if (er3 > 180.0) er3 -= 360.0;
-			else if (er3 < -180.0) er3 += 360.0;
-			if (er4 > 180.0) er4 -= 360.0;
-			else if (er4 < -180.0) er4 += 360.0;
-			fprintf (fprslt, " | %8.4f %8.4f | %5.1f %5.1f | %5.1f %5.1f\n",
-					ra, dc,
-					er3 * 3600.0, ed3,
-					er4 * 3600.0, ed4);
-		}
+				x->ra_pm, x->dec_pm,
+				er1, ed1,
+				er2, ed2);
+	}
+	if (n > 2) {
+		mean_ra = esum_ra / n;
+		mean_dc = esum_dc / n;
+		printf ("RA\n\tMean  = %.2f\n\tStdev = %.2f\n",
+				mean_ra, sqrt((esq_ra - mean_ra * esum_ra) / n));
+		printf ("DEC\n\tMean  = %.2f\n\tStdev = %.2f\n",
+				mean_dc, sqrt((esq_dc - mean_dc * esum_dc) / n));
 	}
 
 	fclose(fprslt);
@@ -471,8 +517,8 @@ int main(int argc, char **argv) {
 	WCSTNX wcstnx;
 	string extfit(".fit");	// 扩展名
 	string filepath;
-	double *ptr;
-	int i, j;
+//	double *ptr;
+//	int i, j;
 
 	wcstnx.SetModel(&model);
 	model.SetParamRes(FUNC_LEGENDRE, X_FULL, 6, 6);
@@ -489,7 +535,7 @@ int main(int argc, char **argv) {
 					model.SetNormalRange(1, 1, frame->wdim, frame->hdim);
 					refstar_from_list(filepath, wcstnx);
 					if (!wcstnx.ProcessFit()) {
-						printf ("scale: %.3f, orientation: %.2f, error: %.3f\n",
+						printf ("FIT 1 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
 								model.scale, model.rotation, model.errfit);
 //						printf ("Rotation Matrix:\n");
 //						for (j = 0, ptr = &model.cd[0][0]; j < 2; ++j) {
@@ -504,10 +550,18 @@ int main(int argc, char **argv) {
 //						printf ("Residual 1:\n");
 //						for (i = 0, ptr = model.res[1].coef; i < model.res[1].nitem; ++i, ++ptr)
 //							printf ("\t %f\n", *ptr);
-//						take_xy(filepath, frame);
-//						rd_from_wcs(filepath, frame);
-//						match_ucac4(frame);
-//						final_stat(filepath, frame);
+						take_xy(filepath, frame);
+						rd_from_wcs(filepath, frame);
+						rd_from_tnx(frame, model);
+						match_ucac4(frame);
+
+						refstar_from_frame(frame, wcstnx);
+						if (!wcstnx.ProcessFit()) {
+							printf ("FIT 2 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
+									model.scale, model.rotation, model.errfit);
+							rd_from_tnx(frame, model);
+							final_stat(filepath, frame);
+						}
 					}
 					printf ("\n");
 				}
@@ -522,8 +576,8 @@ int main(int argc, char **argv) {
 				model.SetNormalRange(1, 1, frame->wdim, frame->hdim);
 				refstar_from_list(filepath, wcstnx);
 				if (!wcstnx.ProcessFit()) {
-					printf ("scale: %.3f arcsec/pixel, orientation: %.2f degrees, error: %.3f milli arcsecs\n",
-							model.scale, model.rotation, model.errfit * 1000.0);
+					printf ("FIT 1 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
+							model.scale, model.rotation, model.errfit);
 //					printf ("Rotation Matrix:\n");
 //					for (j = 0, ptr = &model.cd[0][0]; j < 2; ++j) {
 //						for (i = 0; i < 2; ++i, ++ptr) {
@@ -538,10 +592,18 @@ int main(int argc, char **argv) {
 //					for (i = 0, ptr = model.res[1].coef; i < model.res[1].nitem; ++i, ++ptr)
 //						printf ("\t %f\n", *ptr);
 
-//					take_xy(filepath, frame);
-//					rd_from_wcs(filepath, frame);
-//					match_ucac4(frame);
-//					final_stat(filepath, frame);
+					take_xy(filepath, frame);
+					rd_from_wcs(filepath, frame);
+					rd_from_tnx(frame, model);
+					match_ucac4(frame);
+
+					refstar_from_frame(frame, wcstnx);
+					if (!wcstnx.ProcessFit()) {
+						printf ("FIT 2 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
+								model.scale, model.rotation, model.errfit);
+						rd_from_tnx(frame, model);
+						final_stat(filepath, frame);
+					}
 				}
 				printf ("\n");
 			}

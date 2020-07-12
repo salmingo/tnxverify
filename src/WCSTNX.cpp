@@ -62,9 +62,7 @@ PrjTNXRes::PrjTNXRes() {
 }
 
 PrjTNXRes::~PrjTNXRes() {
-	free_array(&coef);
-	free_array(&xv);
-	free_array(&yv);
+	UnInitialize();
 }
 
 void PrjTNXRes::SetParam(int func, int xterm, int xorder, int yorder) {
@@ -226,7 +224,7 @@ WCSTNX::WCSTNX() {
 }
 
 WCSTNX::~WCSTNX() {
-
+	stars_.clear();
 }
 
 void WCSTNX::SetModel(PrjTNX* model) {

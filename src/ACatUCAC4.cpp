@@ -35,8 +35,8 @@ ACatUCAC4::~ACatUCAC4() {
 	if (m_asc)   delete []m_asc;
 }
 
-ucac4item_ptr ACatUCAC4::GetResult(int &n) {
-	n = m_nstars;
+ucac4item_ptr ACatUCAC4::GetResult(int *n) {
+	if (n) *n = m_nstars;
 	return m_stars;
 }
 

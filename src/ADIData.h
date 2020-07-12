@@ -115,14 +115,13 @@ struct ObjectInfo {
 	 */
 	double ra_fit;		//< 赤经, 量纲: 角度
 	double dec_fit;		//< 赤纬, 量纲: 角度
+	double ra_pm;		//< 自行, 量纲: 角秒
+	double dec_pm;
 	/*!
-	 * @var mag_cat 星表星等
-	 * 索引:
-	 * 0  1  2  3  4
-	 * B  V  g' r' i'
+	 * @var mag_cat 星表V星等
 	 */
-	double mag_cat[5];	//< 星等: 星表
-	double mag_fit[5];	//< 星等: 拟合
+	double mag_cat;		//< 星等: 星表
+	double mag_fit;		//< 星等: 拟合
 
 public:
 	ObjectInfo() {
