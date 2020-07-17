@@ -330,6 +330,15 @@ void refstar_from_list(const string &filepath, WCSTNX& wcstnx) {
 		wcstnx.AddSample(star);
 	}
 
+	path xyrd = filepath;
+	xyrd.replace_extension(".xyrd");
+	FILE* fp = fopen(xyrd.c_str(), "w");
+	for (long i = 0; i < nrows; ++i) {
+		fprintf (fp, "%6.1f %6.1f %8.4f %8.4f\n",
+				x[i], y[i], ra[i], dc[i]);
+	}
+	fclose(fp);
+
 	delete []ra;
 	delete []dc;
 	delete []x;
@@ -589,19 +598,6 @@ int main(int argc, char **argv) {
 				if (!wcstnx.ProcessFit()) {
 					printf ("FIT 1 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
 							model.scale, model.rotation, model.errfit);
-//					printf ("Rotation Matrix:\n");
-//					for (j = 0, ptr = &model.cd[0][0]; j < 2; ++j) {
-//						for (i = 0; i < 2; ++i, ++ptr) {
-//							printf ("%G  ", *ptr);
-//						}
-//						printf ("\n");
-//					}
-//					printf ("Residual 0:\n");
-//					for (i = 0, ptr = model.res[0].coef; i < model.res[0].nitem; ++i, ++ptr)
-//						printf ("\t %f\n", *ptr);
-//					printf ("Residual 1:\n");
-//					for (i = 0, ptr = model.res[1].coef; i < model.res[1].nitem; ++i, ++ptr)
-//						printf ("\t %f\n", *ptr);
 
 					take_xy(filepath, frame);
 					rd_from_wcs(filepath, frame);
@@ -610,12 +606,12 @@ int main(int argc, char **argv) {
 					final_stat(filepath, frame);
 
 					refstar_from_frame(frame, wcstnx);
-					if (!wcstnx.ProcessFit()) {
-						printf ("FIT 2 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
-								model.scale, model.rotation, model.errfit);
-						rd_from_tnx(frame, model);
-						final_stat(filepath, frame);
-					}
+//					if (!wcstnx.ProcessFit()) {
+//						printf ("FIT 2 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
+//								model.scale, model.rotation, model.errfit);
+//						rd_from_tnx(frame, model);
+//						final_stat(filepath, frame);
+//					}
 				}
 				printf ("\n");
 			}
