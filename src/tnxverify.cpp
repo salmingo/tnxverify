@@ -244,6 +244,14 @@ bool all_exists(const string &filepath) {
 	if (!exists(pathname)) return false;
 	pathname.replace_extension(".wcs");
 	if (!exists(pathname)) return false;
+	pathname.replace_extension(".rdls");
+	if (!exists(pathname)) return false;
+
+	path filename = path(filepath).stem();
+	path xyls = path(filepath).parent_path();
+	filename += "-indx.xyls";
+	xyls /= filename;
+	if (!exists(xyls)) return false;
 
 	return true;
 }
@@ -413,7 +421,7 @@ void match_ucac4(ImgFrmPtr frame) {
 	boost::shared_ptr<ACatUCAC4> ucac4 = boost::make_shared<ACatUCAC4>();
 	NFObjVector &nfobj = frame->nfobj;
 	int n(0), nfound, i, j;
-	double r(0.8);	//1角分半径
+	double r(0.17);	//10角秒半径
 	double t; // 儒略年 * 0.1毫角秒转角秒系数
 	ucac4item_ptr starptr;
 
@@ -535,8 +543,9 @@ int main(int argc, char **argv) {
 					model.SetNormalRange(1, 1, frame->wdim, frame->hdim);
 					refstar_from_list(filepath, wcstnx);
 					if (!wcstnx.ProcessFit()) {
-						printf ("FIT 1 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
-								model.scale, model.rotation, model.errfit);
+//						printf ("FIT 1 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
+//								model.scale, model.rotation, model.errfit);
+
 //						printf ("Rotation Matrix:\n");
 //						for (j = 0, ptr = &model.cd[0][0]; j < 2; ++j) {
 //							for (i = 0; i < 2; ++i, ++ptr) {
@@ -550,18 +559,20 @@ int main(int argc, char **argv) {
 //						printf ("Residual 1:\n");
 //						for (i = 0, ptr = model.res[1].coef; i < model.res[1].nitem; ++i, ++ptr)
 //							printf ("\t %f\n", *ptr);
+
 						take_xy(filepath, frame);
 						rd_from_wcs(filepath, frame);
 						rd_from_tnx(frame, model);
 						match_ucac4(frame);
+						final_stat(filepath, frame);
 
 						refstar_from_frame(frame, wcstnx);
-						if (!wcstnx.ProcessFit()) {
-							printf ("FIT 2 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
-									model.scale, model.rotation, model.errfit);
-							rd_from_tnx(frame, model);
-							final_stat(filepath, frame);
-						}
+//						if (!wcstnx.ProcessFit()) {
+//							printf ("FIT 2 >> scale: %.3f, orientation: %.2f, error: %.3f\n",
+//									model.scale, model.rotation, model.errfit);
+//							rd_from_tnx(frame, model);
+//							final_stat(filepath, frame);
+//						}
 					}
 					printf ("\n");
 				}
@@ -596,6 +607,7 @@ int main(int argc, char **argv) {
 					rd_from_wcs(filepath, frame);
 					rd_from_tnx(frame, model);
 					match_ucac4(frame);
+					final_stat(filepath, frame);
 
 					refstar_from_frame(frame, wcstnx);
 					if (!wcstnx.ProcessFit()) {
