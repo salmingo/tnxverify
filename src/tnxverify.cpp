@@ -21,6 +21,15 @@
  - 由TNX模型计算(x2,y2)对应的(ra3,dc3)
  - 从UCAC4中查找与(ra3, dc3)匹配的参考星
  - 评估定位精度；输出匹配恒星信息
+ 小结:
+ - astrometry.net使用参数--use-sextractor输出的.xyls中, x/y与SEx输出的x/y不同.
+   Geo14-10样本统计结果:
+   x_P-V = 3.4, y_P-V = 2.7, x_RMS = 0.715, y_RMS = 0.668
+ - 以10″为阈值, WCS和x/y(SEx)计算结果(ra, dec)_wcs和UCAC4匹配的参考星与.rdls基本一致.
+   但存在意外:
+   (1) 无匹配: 3
+   (2) 大误差: 1
+ - 用于拟合WCS的参考星, 采用SIP模型和TNX模型的计算结果差别很小, 可以忽略
  **/
 
 #include <cstdio>
@@ -32,6 +41,7 @@
 #include <fitsio.h>
 #include "ADefine.h"
 #include "ADIData.h"
+#include "AMath.h"
 #include "ACatUCAC4.h"
 #include "FITSHandler.hpp"
 #include "WCSTNX.h"
@@ -208,6 +218,7 @@ public:
 
 		r0 *= D2R;
 		d0 *= D2R;
+
 		return !status;
 	}
 
@@ -289,7 +300,7 @@ void resolve_dateobs(const string &filepath, ImgFrmPtr frame) {
  * @param filepath  文件路径
  * @param frame     数据结构
  */
-void refstar_from_list(const string &filepath, WCSTNX& wcstnx) {
+void refstar_from_list(const string &filepath) {
 	FITSHandler hfit;
 	int status(0);
 	int nhdu;
@@ -318,17 +329,6 @@ void refstar_from_list(const string &filepath, WCSTNX& wcstnx) {
 	hfit(xyls.c_str());
 	fits_read_col(hfit(), TDOUBLE, 1, 1, 1, nrows, NULL, x, NULL, &status);
 	fits_read_col(hfit(), TDOUBLE, 2, 1, 1, nrows, NULL, y, NULL, &status);
-
-	// 填充参考星
-	wcstnx.PrepareFit();
-	for (long i = 0; i < nrows; ++i) {
-		MatchedStar star;
-		star.x   = x[i];
-		star.y   = y[i];
-		star.ra  = ra[i];
-		star.dc  = dc[i];
-		wcstnx.AddSample(star);
-	}
 
 	path xyrd = filepath;
 	xyrd.replace_extension(".xyrd");
@@ -401,9 +401,16 @@ void rd_from_wcs(const string &filepath, ImgFrmPtr frame) {
 	NFObjVector &nfobj = frame->nfobj;
 
 	pathname.replace_extension(".wcs");
-	wcs.load_wcs(pathname.string());
-	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
-		wcs.image_to_wcs(x->ptbc.x, x->ptbc.y, x->ra_inst, x->dec_inst);
+	if (wcs.load_wcs(pathname.string())) {
+		double cd[2][2];
+		AMath math;
+
+		memcpy (&cd[0][0], &wcs.cd[0][0], sizeof(cd));
+		frame->scale = sqrt(math.LUDet(2, &cd[0][0])) * 3600.;
+
+		for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
+			wcs.image_to_wcs(x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
+		}
 	}
 }
 
@@ -425,24 +432,26 @@ void rd_from_tnx(ImgFrmPtr frame, PrjTNX& model) {
 /*!
  * @brief 与UCAC4匹配, 提取星表坐标
  * @param frame  数据结构
+ * @param r      搜索半径, 量纲: 角秒. 缺省值: 10″
  */
-void match_ucac4(ImgFrmPtr frame, bool use_wcs = true) {
+void match_ucac4(ImgFrmPtr frame, double r = 10.) {
 	boost::shared_ptr<ACatUCAC4> ucac4 = boost::make_shared<ACatUCAC4>();
 	NFObjVector &nfobj = frame->nfobj;
-	int n(0), nfound, i, j;
-	double r(0.17);	// 半径: 10″. 像元比例尺: 8.4″/pixel
-	double t; // 儒略年 * 0.1毫角秒转角秒系数
-	double ra, dc, er, ed;
 	ucac4item_ptr starptr;
-	double sq_r(0.), sq_d(0.), sum_r(0.), sum_d(0.);
+	int n(0), nfound, i, j;
+	double pms; // 儒略年 * 0.1毫角秒转角秒系数
+	double ra, dc, er, ed;
 	double emin, t1, t2, cosd;
 
-	t = (frame->mjdobs - 51544.5) * 1E-4 / 365.25;
+	r /= 60.;	// 搜索半径, 量纲=>角分
+	pms = (frame->mjdobs - 51544.5) * 1E-4 / 365.25;
 	ucac4->SetPathRoot("/Users/lxm/Catalogue/UCAC4");
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
-		ra = use_wcs ? x->ra_inst : x->ra_fit;
-		dc = use_wcs ? x->dec_inst : x->dec_fit;
+		x->matched = 0;
+		ra = x->ra_fit;
+		dc = x->dec_fit;
 		cosd = cos(dc * D2R);
+
 		if ((nfound = ucac4->FindStar(ra, dc, r))) {
 			starptr = ucac4->GetResult();
 			if (nfound == 1) j = 0;
@@ -462,31 +471,16 @@ void match_ucac4(ImgFrmPtr frame, bool use_wcs = true) {
 				}
 			}
 
-			x->dec_pm   = starptr[j].pmdc * t;
+			x->ra_pm    = starptr[j].pmrac * pms / cosd;
+			x->dec_pm   = starptr[j].pmdc * pms;
 			x->dec_cat  = (double) starptr[j].spd / MILLISEC - 90.0;
-			x->ra_pm    = starptr[j].pmrac * t / cos(x->dec_cat * D2R);
 			x->ra_cat   = (double) starptr[j].ra / MILLISEC;
 			x->mag_cat  = starptr[j].apasm[1] * 0.001;
-			x->matched = 1;
+			x->matched  = 1;
 			++n;
-
-			er = ra - x->ra_cat;
-			if (er > 180.) er -= 360.;
-			else if (er < -180.) er += 360.;
-			er *= cosd;
-			ed = dc - x->dec_cat;
-			sum_r += er;
-			sq_r  += er * er;
-			sum_d += ed;
-			sq_d += ed * ed;
 		}
 	}
-	printf (">> match_ucac4(): %i stars are matched\n"
-			"\t RA:  %.2f arcsec, %.3f arcsec\n"
-			"\t DEC: %.2f arcsec, %.3f arcsec\n",
-			n,
-			sum_r * 3600. / n, 3600. * sqrt((sq_r - sum_r * sum_r / n) / n),
-			sum_d * 3600. / n, 3600. * sqrt((sq_d - sum_d * sum_d / n) / n));
+	printf (">> %i stars are matched with UCAC4\n", n);
 }
 
 /*!
@@ -497,7 +491,7 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 	path pathname = filepath;
 	NFObjVector &nfobj = frame->nfobj;
 	FILE *fprslt;
-	double er1, er2, ed1, ed2;
+	double er, ed;
 	double esq_ra(0.0), esum_ra(0.0), esq_dc(0.0), esum_dc(0.0);
 	double mean_ra, mean_dc;
 	int n(0);
@@ -505,36 +499,29 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 	pathname.replace_extension(".txt");
 	fprslt = fopen(pathname.c_str(), "w");
 
-	fprintf (fprslt, "%6s %6s %8s %8s %7s %8s %8s %8s %8s\n",
-			"X", "Y", "RA_CAT", "DEC_CAT", "MAG_CAT", "RA_WCS", "DEC_WCS", "RA_TNX", "DEC_TNX");
+	fprintf (fprslt, "%6s %6s %8s %8s %7s %8s %8s\n",
+			"X", "Y", "RA_CAT", "DEC_CAT", "MAG_CAT", "RA_TNX", "DEC_TNX");
 
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
 		if (x->matched != 1) continue;
-		er1 = x->ra_fit - x->ra_cat;
-		ed1 = (x->dec_fit - x->dec_cat) * 3600.0;
-		er2 = x->ra_inst - x->ra_fit;
-		ed2 = (x->dec_inst - x->dec_fit) * 3600.0;
-		if (er1 > 180.0) er1 -= 360.0;
-		else if (er1 < -180.0) er1 += 360.0;
-		if (er2 > 180.0) er2 -= 360.0;
-		else if (er2 < -180.0) er2 += 360.0;
-		er1 *= 3600.0;
-		er2 *= 3600.0;
+		er = x->ra_fit - x->ra_cat;
+		ed = (x->dec_fit - x->dec_cat) * 3600.0;
+		if (er > 180.0) er -= 360.0;
+		else if (er < -180.0) er += 360.0;
+		er *= 3600.0;
 
-		esum_ra += er1;
-		esq_ra  += er1 * er1;
-		esum_dc += ed1;
-		esq_dc  += ed1 * ed1;
+		esum_ra += er;
+		esq_ra  += er * er;
+		esum_dc += ed;
+		esq_dc  += ed * ed;
 		++n;
 
-		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f %7.3f %8.4f %8.4f %8.4f %8.4f %5.1f %5.1f | %5.1f %5.1f | %5.1f %5.1f\n",
+		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f %7.3f %8.4f %8.4f %5.1f %5.1f | %5.1f %5.1f\n",
 				x->ptbc.x, x->ptbc.y,
 				x->ra_cat, x->dec_cat, x->mag_cat,
-				x->ra_inst, x->dec_inst,
 				x->ra_fit, x->dec_fit,
 				x->ra_pm, x->dec_pm,
-				er1, ed1,
-				er2, ed2);
+				er, ed);
 	}
 	if (n > 2) {
 		mean_ra = esum_ra / n;
@@ -563,18 +550,25 @@ void process_image(const string& filepath) {
 	resolve_dateobs(filepath, frame);
 	take_xy(filepath, frame);
 	rd_from_wcs(filepath, frame);
-	match_ucac4(frame);
+	match_ucac4(frame, 1.5 * frame->scale);	// WCS与SEx的x/y差异统计标准差约0.7pixel, 取2σ作为阈值
 	refstar_from_frame(frame, wcstnx);
 	if (!wcstnx.ProcessFit()) {
+		printf (">> 1 FIT Error: %.3f\n", model.errfit);
+		/**
+		 * 因为样本存在偏差, 所以重新拟合
+		 */
 		rd_from_tnx(frame, model);
-		match_ucac4(frame, false);
-
+		match_ucac4(frame, model.errfit * 3.);	// 3σ: 1) 尽可能多的样本; 2) 避免选择效应
 		refstar_from_frame(frame, wcstnx);
-		wcstnx.ProcessFit();
-		rd_from_tnx(frame, model);
-		match_ucac4(frame, false);
-		final_stat(filepath, frame);
+
+		if (!wcstnx.ProcessFit()) {
+			printf (">> 2 FIT Error: %.3f\n", model.errfit);
+			rd_from_tnx(frame, model);
+			match_ucac4(frame, 5. * model.errfit);
+			final_stat(filepath, frame);
+		}
 	}
+	else printf ("!!!! failed to fit !!!!\n");
 	printf ("\n");
 }
 

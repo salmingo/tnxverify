@@ -92,12 +92,6 @@ struct ObjectInfo {
 	double quality;		//< 加权星像质量. 偏离理想点像, 质量增加
 	/* 天文定位结果 */
 	/*!
-	 * @var (ra_inst, dec_inst) 赤道坐标, J2000. Ast拟合结果
-	 */
-	double ra_inst;		//< 赤经, 量纲: 角度
-	double dec_inst;	//< 赤纬, 量纲: 角度
-	/* 流量定标结果 */
-	/*!
 	 * @var matched 匹配结果
 	 * -1: 热点/坏像素
 	 *  0: 无匹配对象
@@ -110,13 +104,14 @@ struct ObjectInfo {
 	 */
 	double ra_cat;		//< 赤经, 量纲: 角度
 	double dec_cat;		//< 赤纬, 量纲: 角度
+	double ra_pm;		//< 自行, 量纲: 角秒
+	double dec_pm;
 	/*!
 	 * @var (ra_fit, dec_fit) 赤道坐标, J2000, 修正自行. ProjectTNX拟合结果
 	 */
 	double ra_fit;		//< 赤经, 量纲: 角度
 	double dec_fit;		//< 赤纬, 量纲: 角度
-	double ra_pm;		//< 自行, 量纲: 角秒
-	double dec_pm;
+	/* 流量定标结果 */
 	/*!
 	 * @var mag_cat 星表V星等
 	 */
@@ -208,6 +203,7 @@ struct ImageFrame {
 	int nobjs;			//< 目标数量
 	NFObjVector nfobj;	//< 星状目标信息集合
 	PT2F eqc;			//< 赤道坐标: 中心指向位置, J2000
+	double scale;		//< 像元比例尺, 量纲: 角秒/像素
 
 public:
 	~ImageFrame() {
