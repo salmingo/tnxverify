@@ -300,7 +300,7 @@ void resolve_dateobs(const string &filepath, ImgFrmPtr frame) {
  * @param filepath  文件路径
  * @param frame     数据结构
  */
-void refstar_from_list(const string &filepath) {
+void refstar_from_list(const string &filepath, ImgFrmPtr frame, PrjTNX& model) {
 	FITSHandler hfit;
 	int status(0);
 	int nhdu;
@@ -338,6 +338,47 @@ void refstar_from_list(const string &filepath) {
 				x[i], y[i], ra[i], dc[i]);
 	}
 	fclose(fp);
+
+	// 比对坐标
+	NFObjVector &nfobj = frame->nfobj;
+	int nobj = nfobj.size();
+	int i, j, ncount(0);
+	double ra1, dc1, ra2, dc2, x1, y1;
+	double era, edc, cosd, emin;
+	double t(2. / 3600.);
+
+	for (i = 0; i < nrows; ++i) {
+		ra1 = ra[i];
+		dc1 = dc[i];
+		cosd = cos(dc1 * D2R);
+		emin = 1.E30;
+
+		for (j = 0; j < nobj; ++j) {
+			if (nfobj[j].matched != 1) continue;
+			era = nfobj[j].ra_cat - ra1;
+			edc = nfobj[j].dec_cat - dc1;
+			if (era > 180.) era -= 360.;
+			else if (era < -180.) era += 360.;
+
+			if (fabs(era) <= t && fabs(edc) <= t) {
+				printf ("%6.1f %6.1f %8.4f %8.4f <==> %6.1f %6.1f %8.4f %8.4f | %5.1f %5.1f\n",
+						x[i], y[i], ra1, dc1,
+						nfobj[j].ptbc.x, nfobj[j].ptbc.y, nfobj[j].ra_cat, nfobj[j].dec_cat,
+						era * 3600., edc * 3600.);
+				++ncount;
+				break;
+			}
+		}
+
+		if (j == nobj) {// 未匹配, 计算在TNX模型下, (ra1, dc1)对应的(x, y)
+			model.WCS2Image(ra1 * D2R, dc1 * D2R, x1, y1);
+			model.Image2WCS(x1, y1, ra2, dc2);
+			printf ("!!!! %6.1f %6.1f %8.4f %8.4f => %6.1f %6.1f %8.4f %8.4f\n",
+					x[i], y[i], ra1, dc1,
+					x1, y1, ra2 * R2D, dc2 * R2D);
+		}
+	}
+	printf ("## %i of %ld are found\n", ncount, nrows);
 
 	delete []ra;
 	delete []dc;
@@ -424,7 +465,7 @@ void rd_from_tnx(ImgFrmPtr frame, PrjTNX& model) {
 
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
 		model.Image2WCS(x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
-		x->ra_fit  *= R2D;
+		x->ra_fit *= R2D;
 		x->dec_fit *= R2D;
 	}
 }
@@ -558,7 +599,7 @@ void process_image(const string& filepath) {
 		 * 因为样本存在偏差, 所以重新拟合
 		 */
 		rd_from_tnx(frame, model);
-		match_ucac4(frame, model.errfit * 3.);	// 3σ: 1) 尽可能多的样本; 2) 避免选择效应
+		match_ucac4(frame, 3. * model.errfit);	// 3σ: 1) 尽可能多的样本; 2) 避免选择效应
 		refstar_from_frame(frame, wcstnx);
 
 		if (!wcstnx.ProcessFit()) {
@@ -566,6 +607,8 @@ void process_image(const string& filepath) {
 			rd_from_tnx(frame, model);
 			match_ucac4(frame, 5. * model.errfit);
 			final_stat(filepath, frame);
+
+			refstar_from_list(filepath, frame, model);
 		}
 	}
 	else printf ("!!!! failed to fit !!!!\n");

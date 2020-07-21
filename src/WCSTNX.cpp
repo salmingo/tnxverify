@@ -180,7 +180,7 @@ void PrjTNX::WCS2Image(double ra, double dc, double &x, double &y) {
 	double xi, eta, dxi, deta, xt, yt;
 	int cnt(0);
 
-	WCS2Plane(ra * D2R, dc * D2R, xi, eta);
+	WCS2Plane(ra, dc, xi, eta);
 	Plane2Image(xi, eta, x, y);
 
 	do {
