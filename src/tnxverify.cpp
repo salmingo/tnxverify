@@ -342,41 +342,48 @@ void refstar_from_list(const string &filepath, ImgFrmPtr frame, PrjTNX& model) {
 	// 比对坐标
 	NFObjVector &nfobj = frame->nfobj;
 	int nobj = nfobj.size();
-	int i, j, ncount(0);
-	double ra1, dc1, ra2, dc2, x1, y1;
-	double era, edc, cosd, emin;
+	int i, j, k, ncount(0);
+	double ra1, dc1, ra2, dc2;
+	double era, edc, cosd, e2, e2min;
 	double t(2. / 3600.);
 
 	for (i = 0; i < nrows; ++i) {
 		ra1 = ra[i];
 		dc1 = dc[i];
 		cosd = cos(dc1 * D2R);
-		emin = 1.E30;
+		e2min = 1.E30;
 
 		for (j = 0; j < nobj; ++j) {
-			if (nfobj[j].matched != 1) continue;
-			era = nfobj[j].ra_cat - ra1;
-			edc = nfobj[j].dec_cat - dc1;
+			ra2 = nfobj[j].matched == 1 ? nfobj[j].ra_cat : nfobj[j].ra_fit;
+			dc2 = nfobj[j].matched == 1 ? nfobj[j].dec_cat : nfobj[j].dec_fit;
+			era = ra2 - ra1;
+			edc = dc2 - dc1;
 			if (era > 180.) era -= 360.;
 			else if (era < -180.) era += 360.;
-
-			if (fabs(era) <= t && fabs(edc) <= t) {
-				printf ("%6.1f %6.1f %8.4f %8.4f <==> %6.1f %6.1f %8.4f %8.4f | %5.1f %5.1f\n",
-						x[i], y[i], ra1, dc1,
-						nfobj[j].ptbc.x, nfobj[j].ptbc.y, nfobj[j].ra_cat, nfobj[j].dec_cat,
-						era * 3600., edc * 3600.);
-				++ncount;
-				break;
+			e2 = era * era * cosd * cosd + edc * edc;
+			if (e2 < e2min) {
+				e2min = e2;
+				k = j;
 			}
-		}
 
-		if (j == nobj) {// 未匹配, 计算在TNX模型下, (ra1, dc1)对应的(x, y)
-			model.WCS2Image(ra1 * D2R, dc1 * D2R, x1, y1);
-			model.Image2WCS(x1, y1, ra2, dc2);
-			printf ("!!!! %6.1f %6.1f %8.4f %8.4f => %6.1f %6.1f %8.4f %8.4f\n",
-					x[i], y[i], ra1, dc1,
-					x1, y1, ra2 * R2D, dc2 * R2D);
+			if (fabs(era) <= t && fabs(edc) <= t) break;
 		}
+		if (k != j) {
+			ra2 = nfobj[k].matched == 1 ? nfobj[k].ra_cat : nfobj[k].ra_fit;
+			dc2 = nfobj[k].matched == 1 ? nfobj[k].dec_cat : nfobj[k].dec_fit;
+			era = ra2 - ra1;
+			edc = dc2 - dc1;
+			if (era > 180.) era -= 360.;
+			else if (era < -180.) era += 360.;
+		}
+		printf ("%6.1f %6.1f %8.4f %8.4f <==> %6.1f %6.1f %8.4f %8.4f | %5.1f %5.1f",
+				x[i], y[i], ra1, dc1,
+				nfobj[k].ptbc.x, nfobj[k].ptbc.y, ra2, dc2,
+				era * 3600., edc * 3600.);
+
+		if (nfobj[k].matched == 1) ++ncount;
+		else printf ("\t !!!!");
+		printf ("\n");
 	}
 	printf ("## %i of %ld are found\n", ncount, nrows);
 
@@ -540,29 +547,31 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 	pathname.replace_extension(".txt");
 	fprslt = fopen(pathname.c_str(), "w");
 
-	fprintf (fprslt, "%6s %6s %8s %8s %7s %8s %8s\n",
-			"X", "Y", "RA_CAT", "DEC_CAT", "MAG_CAT", "RA_TNX", "DEC_TNX");
+	fprintf (fprslt, "%6s %6s %8s %8s %8s %8s %7s %5s %5s | %5s %5s\n",
+			"X", "Y", "RA_TNX", "DEC_TNX",
+			"RA_CAT", "DEC_CAT", "MAG_CAT",
+			"PMR", "PMD",
+			"ERa", "EDc");
 
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
-		if (x->matched != 1) continue;
-		er = x->ra_fit - x->ra_cat;
-		ed = (x->dec_fit - x->dec_cat) * 3600.0;
-		if (er > 180.0) er -= 360.0;
-		else if (er < -180.0) er += 360.0;
-		er *= 3600.0;
+		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f ", x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
+		if (x->matched == 1) {
+			er = x->ra_fit - x->ra_cat;
+			ed = (x->dec_fit - x->dec_cat) * 3600.0;
+			if (er > 180.0) er -= 360.0;
+			else if (er < -180.0) er += 360.0;
+			er *= 3600.0;
+			esum_ra += er;
+			esq_ra  += er * er;
+			esum_dc += ed;
+			esq_dc  += ed * ed;
+			++n;
 
-		esum_ra += er;
-		esq_ra  += er * er;
-		esum_dc += ed;
-		esq_dc  += ed * ed;
-		++n;
-
-		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f %7.3f %8.4f %8.4f %5.1f %5.1f | %5.1f %5.1f\n",
-				x->ptbc.x, x->ptbc.y,
-				x->ra_cat, x->dec_cat, x->mag_cat,
-				x->ra_fit, x->dec_fit,
-				x->ra_pm, x->dec_pm,
-				er, ed);
+			fprintf (fprslt, "%8.4f %8.4f %7.3f %5.1f %5.1f | %5.1f %5.1f",
+					x->ra_cat, x->dec_cat, x->mag_cat,
+					x->ra_pm, x->dec_pm, er, ed);
+		}
+		fprintf (fprslt, "\n");
 	}
 	if (n > 2) {
 		mean_ra = esum_ra / n;
@@ -582,6 +591,7 @@ void process_image(const string& filepath) {
 	ImgFrmPtr frame = boost::make_shared<ImageFrame>();
 	PrjTNX model;
 	WCSTNX wcstnx;
+	double x0, y0, ra0, dc0;
 
 	printf ("#### %s ####\n", filepath.c_str());
 	wcstnx.SetModel(&model);
@@ -589,9 +599,12 @@ void process_image(const string& filepath) {
 	model.SetNormalRange(1, 1, frame->wdim, frame->hdim);
 
 	resolve_dateobs(filepath, frame);
+	x0 = frame->wdim * 0.5 + 0.5;
+	y0 = frame->hdim * 0.5 + 0.5;
+
 	take_xy(filepath, frame);
 	rd_from_wcs(filepath, frame);
-	match_ucac4(frame, 1.5 * frame->scale);	// WCS与SEx的x/y差异统计标准差约0.7pixel, 取2σ作为阈值
+	match_ucac4(frame, 2.5 * frame->scale);	// WCS与SEx的x/y差异统计标准差约0.7pixel, 取2σ作为阈值
 	refstar_from_frame(frame, wcstnx);
 	if (!wcstnx.ProcessFit()) {
 		printf (">> 1 FIT Error: %.3f\n", model.errfit);
@@ -599,16 +612,21 @@ void process_image(const string& filepath) {
 		 * 因为样本存在偏差, 所以重新拟合
 		 */
 		rd_from_tnx(frame, model);
-		match_ucac4(frame, 3. * model.errfit);	// 3σ: 1) 尽可能多的样本; 2) 避免选择效应
+		match_ucac4(frame, 2.5 * model.errfit);	// 2.5σ: 1) 尽可能多的样本; 2) 避免选择效应
 		refstar_from_frame(frame, wcstnx);
 
 		if (!wcstnx.ProcessFit()) {
 			printf (">> 2 FIT Error: %.3f\n", model.errfit);
+			model.Image2WCS(x0, y0, ra0, dc0);
+			printf ("Center: (%6.1f  %6.1f) <=> (%8.4f  %8.4f).  Mjd: %s\n",
+					x0, y0, ra0 * R2D, dc0 * R2D,
+					frame->dateobs.c_str());
+
 			rd_from_tnx(frame, model);
-			match_ucac4(frame, 5. * model.errfit);
+			match_ucac4(frame, 3.5 * model.errfit);
 			final_stat(filepath, frame);
 
-			refstar_from_list(filepath, frame, model);
+//			refstar_from_list(filepath, frame, model);
 		}
 	}
 	else printf ("!!!! failed to fit !!!!\n");
