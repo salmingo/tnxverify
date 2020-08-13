@@ -555,6 +555,7 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
 		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f ", x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
+
 		if (x->matched == 1) {
 			er = x->ra_fit - x->ra_cat;
 			ed = (x->dec_fit - x->dec_cat) * 3600.0;
@@ -571,6 +572,7 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 					x->ra_cat, x->dec_cat, x->mag_cat,
 					x->ra_pm, x->dec_pm, er, ed);
 		}
+
 		fprintf (fprslt, "\n");
 	}
 	if (n > 2) {
@@ -612,7 +614,7 @@ void process_image(const string& filepath) {
 		 * 因为样本存在偏差, 所以重新拟合
 		 */
 		rd_from_tnx(frame, model);
-		match_ucac4(frame, 2.5 * model.errfit);	// 2.5σ: 1) 尽可能多的样本; 2) 避免选择效应
+		match_ucac4(frame, 3.5 * model.errfit);	// 3.5σ: 1) 尽可能多的样本; 2) 避免选择效应
 		refstar_from_frame(frame, wcstnx);
 
 		if (!wcstnx.ProcessFit()) {
@@ -623,7 +625,7 @@ void process_image(const string& filepath) {
 					frame->dateobs.c_str());
 
 			rd_from_tnx(frame, model);
-			match_ucac4(frame, 3.5 * model.errfit);
+			match_ucac4(frame, 4. * model.errfit);
 			final_stat(filepath, frame);
 
 //			refstar_from_list(filepath, frame, model);
