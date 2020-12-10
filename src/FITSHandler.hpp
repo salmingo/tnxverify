@@ -6,8 +6,8 @@
 #define FITS_HANDLER_H_
 
 #include <stdlib.h>
-#include <longnam.h>
-#include <fitsio.h>
+#include <cfitsio/longnam.h>
+#include <cfitsio/fitsio.h>
 
 struct FITSHandler {
 	fitsfile *fitsptr;	//< 基于cfitsio接口的文件操作接口

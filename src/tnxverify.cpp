@@ -37,8 +37,8 @@
 #include <boost/make_shared.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <longnam.h>
-#include <fitsio.h>
+#include <cfitsio/longnam.h>
+#include <cfitsio/fitsio.h>
 #include "ADefine.h"
 #include "ADIData.h"
 #include "AMath.h"
@@ -255,14 +255,6 @@ bool all_exists(const string &filepath) {
 	if (!exists(pathname)) return false;
 	pathname.replace_extension(".wcs");
 	if (!exists(pathname)) return false;
-	pathname.replace_extension(".rdls");
-	if (!exists(pathname)) return false;
-
-	path filename = path(filepath).stem();
-	path xyls = path(filepath).parent_path();
-	filename += "-indx.xyls";
-	xyls /= filename;
-	if (!exists(xyls)) return false;
 
 	return true;
 }
@@ -295,104 +287,6 @@ void resolve_dateobs(const string &filepath, ImgFrmPtr frame) {
 	frame->mjdobs = tmobs.date().modjulian_day(); // 精确到天. 精度满足自行
 }
 
-/*!
- * @brief 从Ast生成的.xyls和.rdls文件中提取XY和赤道坐标
- * @param filepath  文件路径
- * @param frame     数据结构
- */
-void refstar_from_list(const string &filepath, ImgFrmPtr frame, PrjTNX& model) {
-	FITSHandler hfit;
-	int status(0);
-	int nhdu;
-	const int* hdutype;
-	long nrows;
-	double *ra, *dc, *x, *y;
-
-	// 从.rdls读取赤经赤纬
-	path rdls = filepath;
-	rdls.replace_extension(".rdls");
-	hfit(rdls.c_str());
-	fits_get_num_rows(hfit(), &nrows, &status);
-	ra = new double[nrows];
-	dc = new double[nrows];
-	x  = new double[nrows];
-	y  = new double[nrows];
-	fits_read_col(hfit(), TDOUBLE, 1, 1, 1, nrows, NULL, ra, NULL, &status);
-	fits_read_col(hfit(), TDOUBLE, 2, 1, 1, nrows, NULL, dc, NULL, &status);
-
-	// 从.xyls读取XY
-	path filename = path(filepath).stem();
-	path xyls = path(filepath).parent_path();
-
-	filename += "-indx.xyls";
-	xyls /= filename;
-	hfit(xyls.c_str());
-	fits_read_col(hfit(), TDOUBLE, 1, 1, 1, nrows, NULL, x, NULL, &status);
-	fits_read_col(hfit(), TDOUBLE, 2, 1, 1, nrows, NULL, y, NULL, &status);
-
-	path xyrd = filepath;
-	xyrd.replace_extension(".xyrd");
-	FILE* fp = fopen(xyrd.c_str(), "w");
-	for (long i = 0; i < nrows; ++i) {
-		fprintf (fp, "%6.1f %6.1f %8.4f %8.4f\n",
-				x[i], y[i], ra[i], dc[i]);
-	}
-	fclose(fp);
-
-	// 比对坐标
-	NFObjVector &nfobj = frame->nfobj;
-	int nobj = nfobj.size();
-	int i, j, k, ncount(0);
-	double ra1, dc1, ra2, dc2;
-	double era, edc, cosd, e2, e2min;
-	double t(2. / 3600.);
-
-	for (i = 0; i < nrows; ++i) {
-		ra1 = ra[i];
-		dc1 = dc[i];
-		cosd = cos(dc1 * D2R);
-		e2min = 1.E30;
-
-		for (j = 0; j < nobj; ++j) {
-			ra2 = nfobj[j].matched == 1 ? nfobj[j].ra_cat : nfobj[j].ra_fit;
-			dc2 = nfobj[j].matched == 1 ? nfobj[j].dec_cat : nfobj[j].dec_fit;
-			era = ra2 - ra1;
-			edc = dc2 - dc1;
-			if (era > 180.) era -= 360.;
-			else if (era < -180.) era += 360.;
-			e2 = era * era * cosd * cosd + edc * edc;
-			if (e2 < e2min) {
-				e2min = e2;
-				k = j;
-			}
-
-			if (fabs(era) <= t && fabs(edc) <= t) break;
-		}
-		if (k != j) {
-			ra2 = nfobj[k].matched == 1 ? nfobj[k].ra_cat : nfobj[k].ra_fit;
-			dc2 = nfobj[k].matched == 1 ? nfobj[k].dec_cat : nfobj[k].dec_fit;
-			era = ra2 - ra1;
-			edc = dc2 - dc1;
-			if (era > 180.) era -= 360.;
-			else if (era < -180.) era += 360.;
-		}
-		printf ("%6.1f %6.1f %8.4f %8.4f <==> %6.1f %6.1f %8.4f %8.4f | %5.1f %5.1f",
-				x[i], y[i], ra1, dc1,
-				nfobj[k].ptbc.x, nfobj[k].ptbc.y, ra2, dc2,
-				era * 3600., edc * 3600.);
-
-		if (nfobj[k].matched == 1) ++ncount;
-		else printf ("\t !!!!");
-		printf ("\n");
-	}
-	printf ("## %i of %ld are found\n", ncount, nrows);
-
-	delete []ra;
-	delete []dc;
-	delete []x;
-	delete []y;
-}
-
 void refstar_from_frame(ImgFrmPtr frame, WCSTNX& wcstnx) {
 	NFObjVector &nfobj = frame->nfobj;
 	wcstnx.PrepareFit();
@@ -417,7 +311,7 @@ void take_xy(const string &filepath, ImgFrmPtr frame) {
 	path pathname = filepath;
 	FILE *fp;
 	char line[200];
-	double x, y, flux;
+	double x, y, flux, mag, errmag, fwhm;
 	NFObjVector &nfobj = frame->nfobj;
 	nfobj.clear();
 
@@ -427,11 +321,14 @@ void take_xy(const string &filepath, ImgFrmPtr frame) {
 		if (NULL == fgets(line, 200, fp) || line[0] == '#') continue;
 
 		ObjectInfo obj;
-		sscanf(line, "%lf %lf %lf", &x, &y, &flux);
-		obj.ptbc.x = x;
-		obj.ptbc.y = y;
-		obj.flux   = flux;
-		nfobj.push_back(obj);
+		sscanf(line, "%lf %lf %lf %lf %lf %lf",
+				&x, &y, &flux, &mag, &errmag, &fwhm);
+		if (flux > 1.0 && fwhm > 1.0) {
+			obj.ptbc.x = x;
+			obj.ptbc.y = y;
+			obj.flux   = flux;
+			nfobj.push_back(obj);
+		}
 	}
 	fclose(fp);
 
@@ -547,14 +444,14 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 	pathname.replace_extension(".txt");
 	fprslt = fopen(pathname.c_str(), "w");
 
-	fprintf (fprslt, "%6s %6s %8s %8s %8s %8s %7s %5s %5s | %5s %5s\n",
-			"X", "Y", "RA_TNX", "DEC_TNX",
-			"RA_CAT", "DEC_CAT", "MAG_CAT",
-			"PMR", "PMD",
-			"ERa", "EDc");
+//	fprintf (fprslt, "%6s %6s %8s %8s %8s %8s %7s %5s %5s | %5s %5s\n",
+//			"X", "Y", "RA_TNX", "DEC_TNX",
+//			"RA_CAT", "DEC_CAT", "MAG_CAT",
+//			"PMR", "PMD",
+//			"ERa", "EDc");
 
 	for (NFObjVector::iterator x = nfobj.begin(); x != nfobj.end(); ++x) {
-		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f ", x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
+//		fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f ", x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit);
 
 		if (x->matched == 1) {
 			er = x->ra_fit - x->ra_cat;
@@ -568,12 +465,13 @@ void final_stat(const string &filepath, ImgFrmPtr frame) {
 			esq_dc  += ed * ed;
 			++n;
 
-			fprintf (fprslt, "%8.4f %8.4f %7.3f %5.1f %5.1f | %5.1f %5.1f",
+			fprintf (fprslt, "%6.1f %6.1f %8.4f %8.4f %8.4f %8.4f %7.3f %5.1f %5.1f | %5.1f %5.1f\n",
+					x->ptbc.x, x->ptbc.y, x->ra_fit, x->dec_fit,
 					x->ra_cat, x->dec_cat, x->mag_cat,
 					x->ra_pm, x->dec_pm, er, ed);
 		}
 
-		fprintf (fprslt, "\n");
+//		fprintf (fprslt, "\n");
 	}
 	if (n > 2) {
 		mean_ra = esum_ra / n;
@@ -627,8 +525,6 @@ void process_image(const string& filepath) {
 			rd_from_tnx(frame, model);
 			match_ucac4(frame, 4. * model.errfit);
 			final_stat(filepath, frame);
-
-//			refstar_from_list(filepath, frame, model);
 		}
 	}
 	else printf ("!!!! failed to fit !!!!\n");

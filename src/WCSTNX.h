@@ -30,6 +30,7 @@ struct MatchedStar {
 	double ra, dc;	/// RA/DEC坐标, 量纲: 角度
 	/* 拟合结果 */
 	double ra_fit, dc_fit;	/// RA/DEC坐标, 量纲: 角度
+	double errbias;			///< 偏差: 拟合-样本, 量纲: 角度
 };
 typedef std::vector<MatchedStar> MatStarVec;
 
@@ -157,6 +158,7 @@ struct PrjTNX {
 	double ref_wcsx, ref_wcsy;	/// 参考点世界坐标, 量纲: 弧度
 	double cd[2][2];	/// XY->WCS的转换矩阵, 量纲: 角度/像素
 	double ccd[2][2];	/// WCS->XY的转换矩阵, 量纲: 像素/角度
+//	double cd[2][3];	/// XY->WCS的转换矩阵, 量纲: 角度/像素
 	PrjTNXRes res[2];	/// 残差/畸变参数及模型
 
 /* 接口 */
@@ -346,6 +348,20 @@ protected:
 	 * 模型拟合结果
 	 */
 	bool try_fit();
+	/*!
+	 * @brief 剔除偏差大于3σ的样本
+	 */
+	void sig_clip();
+	/*!
+	 * @brief 依据拟合结果, 计算补充参数
+	 */
+	void calc_suppl();
+	/*!
+	 * @brief 计算拟合残差
+	 * @note
+	 * - 残差此时量纲: 弧度
+	 */
+	void calc_residual();
 };
 //////////////////////////////////////////////////////////////////////////////
 } /* namespace AstroUtil */
